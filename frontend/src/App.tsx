@@ -193,13 +193,13 @@ export function App() {
                 + Register New Target Vault
               </button>
               <a
-                href="https://github.com/genlayerlabs/genlayer-project-boilerplate"
+                href="https://explorer-studio.genlayer.com/address/0xc0547231791DE68E62d7fbcd222766BB86C800C8"
                 target="_blank"
                 rel="noreferrer"
-                className="px-4 py-2.5 rounded-xl bg-gray-900/60 hover:bg-gray-800 text-gray-400 hover:text-white border border-gray-800 text-xs font-medium transition flex items-center gap-1.5"
+                className="px-4 py-2.5 rounded-xl bg-gray-900/80 hover:bg-gray-800 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition flex items-center gap-1.5"
               >
-                <FileCode2 className="w-4 h-4 text-purple-400" />
-                View Python Contract
+                <FileCode2 className="w-4 h-4 text-emerald-400" />
+                View Deployed Contract (0xc054...00C8)
               </a>
             </div>
           </div>

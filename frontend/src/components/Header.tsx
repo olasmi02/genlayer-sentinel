@@ -49,6 +49,19 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="font-semibold text-white">Autonomous Protocols</span>
           </div>
 
+          {/* Deployed Contract Explorer Link */}
+          <a
+            href="https://explorer-studio.genlayer.com/address/0xc0547231791DE68E62d7fbcd222766BB86C800C8"
+            target="_blank"
+            rel="noreferrer"
+            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-900/40 text-xs font-semibold transition shadow-sm"
+            title="View Deployed Contract on GenLayer Studio Explorer"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Contract: 0xc054...00C8</span>
+            <ExternalLink className="w-3 h-3" />
+          </a>
+
           {/* Network Switcher */}
           <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-lg p-1">
             <button
