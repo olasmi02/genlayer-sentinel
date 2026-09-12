@@ -62,6 +62,16 @@ sequenceDiagram
 
 ---
 
+## 🌐 Verified StudioNet Deployment
+
+* **Contract Address**: `0xc0547231791DE68E62d7fbcd222766BB86C800C8`
+* **Deployment Tx**: `0x636933938db7e1c81a24d5b0b3396e05816bf60b774968e06806a62f4cec45ea`
+* **Studio Explorer**: [https://explorer-studio.genlayer.com/address/0xc0547231791DE68E62d7fbcd222766BB86C800C8](https://explorer-studio.genlayer.com/address/0xc0547231791DE68E62d7fbcd222766BB86C800C8)
+* **Consensus Status**: `ACCEPTED` (5/5 Validators Consensus: `MAJORITY_AGREE`)
+* **Live Web App**: [https://olasmi02.github.io/genlayer-sentinel/](https://olasmi02.github.io/genlayer-sentinel/)
+
+---
+
 ## 📂 Project Structure
 
 ```
