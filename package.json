@@ -1,0 +1,21 @@
+{
+  "name": "sentinel",
+  "version": "1.0.0",
+  "description": "SentinEL: Autonomous Protocol Circuit Breaker & Whitehat Escrow for GenLayer Agent Tank Hackathon",
+  "scripts": {
+    "test": "python -m pytest tests/direct/test_sentinel.py -v",
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build"
+  },
+  "keywords": [
+    "genlayer",
+    "genvm",
+    "intelligent-contracts",
+    "ai-agents",
+    "autonomous-protocols",
+    "circuit-breaker",
+    "security"
+  ],
+  "author": "SentinEL Team",
+  "license": "MIT"
+}
