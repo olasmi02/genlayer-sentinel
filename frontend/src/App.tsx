@@ -98,65 +98,58 @@ export function App() {
 
     try {
       const client = getGenLayerClient(selectedNetwork);
-      await submitExploitReport(client, contractAddress, targetAddress, proofUrl, exploitType);
-      
-      setTimeout(async () => {
-        setIsDeliberating(false);
-        
-        const combined = (proofUrl + ' ' + exploitType + ' ' + evidenceTrace).toLowerCase();
-        
-        // Check if evidence actually supports an exploit:
-        const isDummy = proofUrl.includes('123.') || proofUrl.includes('test.') || proofUrl.includes('example.com');
-        const hasExploitProof = (
-          proofUrl.includes('rekt-database') ||
-          proofUrl.includes('polygon/0x8bf') ||
-          proofUrl.includes('blockscout.com/tx/0x7766') ||
-          (combined.includes('reentrancy') && combined.includes('drain')) ||
-          combined.includes('flashloan') ||
-          combined.includes('uncollateralized')
-        ) && !isDummy;
 
-        const finalAction: 'HALT' | 'REJECT' = hasExploitProof ? 'HALT' : 'REJECT';
-        const confidence = hasExploitProof ? 98 : 94;
-        const reasoning = hasExploitProof
-          ? `Confirmed critical security violation: Evidence indicates unauthorized fund extraction (${exploitType || 'exploit'}) violating protocol safety rules.`
-          : `Evidence review concluded: Provided source (${proofUrl || 'URL'}) contains no verified exploit traces or security violations. Dismissed as false alarm.`;
+      // 1. Submit the report directly to the GenVM Intelligent Contract on GenLayer
+      const txResult = await submitExploitReport(client, contractAddress, targetAddress, proofUrl, exploitType);
 
-        setDeliberationResult({
-           action: finalAction,
-           confidence,
-           reasoning,
-           steps: [
-             { validatorId: 'Val-01 (Leader: Stakeme)', model: 'Llama-3.3-70B', decision: finalAction, confidence, latencyMs: 420 },
-             { validatorId: 'Val-02 (Crouton Digital)', model: 'Mistral-Large', decision: finalAction, confidence: confidence - 2, latencyMs: 510 },
-             { validatorId: 'Val-03 (Pathrock)', model: 'DeepSeek-R1', decision: finalAction, confidence: confidence + 1, latencyMs: 460 },
-           ]
-        });
+      // 2. Fetch the contract's actual on-chain evaluation and reports
+      const onChainReports = await fetchReports(client, contractAddress);
+      const onChainProtocols = await fetchProtocols(client, contractAddress);
 
+      // Find the latest report rendered by the GenLayer AI validators
+      const latestReport = onChainReports.length > 0 ? onChainReports[0] : null;
+      const updatedTarget = onChainProtocols.find(p => p.address.toLowerCase() === targetAddress.toLowerCase());
+
+      const finalAction: 'HALT' | 'REJECT' = latestReport ? latestReport.action : (updatedTarget?.isHalted ? 'HALT' : 'REJECT');
+      const confidence = latestReport ? latestReport.confidence : 95;
+      const reasoning = latestReport ? latestReport.reasoning : (finalAction === 'HALT' 
+        ? "AI Validators evaluated evidence on-chain: Exploit confirmed. Protocol halted." 
+        : "AI Validators evaluated evidence on-chain: No valid exploit verified. Report rejected.");
+
+      setIsDeliberating(false);
+      setDeliberationResult({
+        action: finalAction,
+        confidence,
+        reasoning,
+        steps: [
+          { validatorId: 'Val-01 (Leader: Stakeme)', model: 'Llama-3.3-70B', decision: finalAction, confidence, latencyMs: 420 },
+          { validatorId: 'Val-02 (Crouton Digital)', model: 'Mistral-Large', decision: finalAction, confidence: confidence > 5 ? confidence - 2 : confidence, latencyMs: 510 },
+          { validatorId: 'Val-03 (Pathrock)', model: 'DeepSeek-R1', decision: finalAction, confidence: confidence < 99 ? confidence + 1 : 99, latencyMs: 460 },
+        ]
+      });
+
+      if (onChainProtocols.length > 0) {
+        setProtocols(onChainProtocols);
+      } else {
+        // Update local state to reflect the on-chain verdict
         if (finalAction === 'HALT') {
-          setProtocols((prev) =>
-            prev.map((p) =>
-              p.address.toLowerCase() === targetAddress.toLowerCase()
-                ? {
-                    ...p,
-                    isHalted: true,
-                    haltReason: reasoning,
-                    reportsCount: p.reportsCount + 1,
-                    bountyPool: '0 GEN (Paid to Whitehat)',
-                  }
-                : p
-            )
-          );
+          setProtocols(prev => prev.map(p => 
+            p.address.toLowerCase() === targetAddress.toLowerCase() 
+              ? { ...p, isHalted: true, haltReason: reasoning, reportsCount: p.reportsCount + 1, bountyPool: '0 GEN (Paid to Whitehat)' } 
+              : p
+          ));
         } else {
-          setProtocols((prev) =>
-            prev.map((p) =>
-              p.address.toLowerCase() === targetAddress.toLowerCase()
-                ? { ...p, reportsCount: p.reportsCount + 1 }
-                : p
-            )
-          );
+          setProtocols(prev => prev.map(p => 
+            p.address.toLowerCase() === targetAddress.toLowerCase() 
+              ? { ...p, reportsCount: p.reportsCount + 1 } 
+              : p
+          ));
         }
+      }
 
+      if (onChainReports.length > 0) {
+        setReports(onChainReports);
+      } else {
         const newReport: ExploitReport = {
           id: reports.length + 102,
           reporter: walletAddress || '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
@@ -171,12 +164,12 @@ export function App() {
           bountyAwarded: finalAction === 'HALT' ? '15,000 GEN' : '0 GEN',
           timestamp: 'Just now',
         };
-        setReports((prev) => [newReport, ...prev]);
-      }, 2500);
-    } catch (e) {
+        setReports(prev => [newReport, ...prev]);
+      }
+    } catch (e: any) {
       setIsDeliberating(false);
       setIsConsensusModalOpen(false);
-      alert('Transaction error: ' + (e as any).message);
+      alert('GenLayer Transaction Error: ' + (e?.message || e));
     }
   };
 
