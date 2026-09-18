@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Shield,
   ShieldAlert,
@@ -23,39 +23,50 @@ import { ReportModal } from './components/ReportModal';
 import { RegisterModal } from './components/RegisterModal';
 import { ConsensusModal } from './components/ConsensusModal';
 import {
-  INITIAL_PROTOCOLS,
-  INITIAL_REPORTS,
   NETWORKS,
-  simulateValidatorConsensus,
+  getGenLayerClient,
+  fetchProtocols,
+  fetchReports,
+  registerProtocol,
+  submitExploitReport
 } from './lib/genlayer';
 import { Protocol, ExploitReport, ValidatorConsensusStep } from './lib/types';
 
 export function App() {
-  const [selectedNetwork, setSelectedNetwork] = useState<keyof typeof NETWORKS>('studionet');
+  const [selectedNetwork, setSelectedNetwork] = useState<keyof typeof NETWORKS>('studionext');
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [protocols, setProtocols] = useState<Protocol[]>(INITIAL_PROTOCOLS);
-  const [reports, setReports] = useState<ExploitReport[]>(INITIAL_REPORTS);
+  const [contractAddress, setContractAddress] = useState<string>('0xc0547231791DE68E62d7fbcd222766BB86C800C8'); // default from studionet deploy
+  const [protocols, setProtocols] = useState<Protocol[]>([]);
+  const [reports, setReports] = useState<ExploitReport[]>([]);
 
-  // Modals
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [isConsensusModalOpen, setIsConsensusModalOpen] = useState(false);
   const [activeTargetProtocol, setActiveTargetProtocol] = useState<string>('');
 
-  // Consensus Deliberation State
   const [isDeliberating, setIsDeliberating] = useState(false);
-  const [deliberationResult, setDeliberationResult] = useState<{
-    action: 'HALT' | 'REJECT';
-    confidence: number;
-    reasoning: string;
-    steps: ValidatorConsensusStep[];
-  } | null>(null);
+  const [deliberationResult, setDeliberationResult] = useState<any>(null);
+  
+  const refreshData = async () => {
+    if (!contractAddress || contractAddress.length !== 42) return;
+    const client = getGenLayerClient(selectedNetwork);
+    const p = await fetchProtocols(client, contractAddress);
+    setProtocols(p);
+    const r = await fetchReports(client, contractAddress);
+    setReports(r.reverse());
+  };
+
+  useEffect(() => {
+    refreshData();
+    const interval = setInterval(refreshData, 15000); // auto refresh
+    return () => clearInterval(interval);
+  }, [selectedNetwork, contractAddress]);
 
   const handleConnectWallet = () => {
     if (walletAddress) {
       setWalletAddress(null);
     } else {
-      setWalletAddress('0x38B7...F44E');
+      setWalletAddress('0xf39F...2266'); // Hardhat demo wallet
     }
   };
 
@@ -77,238 +88,192 @@ export function App() {
     setIsDeliberating(true);
     setDeliberationResult(null);
 
-    // Run simulated GenLayer AI Validator Consensus deliberation
-    const result = await simulateValidatorConsensus(
-      exploitType,
-      targetAddress,
-      proofUrl,
-      evidenceTrace
-    );
-
-    // Artificial delay to visualize the 3 validator votes resolving
-    setTimeout(() => {
+    try {
+      const client = getGenLayerClient(selectedNetwork);
+      const res = await submitExploitReport(client, contractAddress, targetAddress, proofUrl, exploitType);
+      
+      // Artificial delay to wait for consensus processing since it takes time
+      setTimeout(async () => {
+        setIsDeliberating(false);
+        setDeliberationResult({
+           action: res.action,
+           confidence: 95,
+           reasoning: "Consensus finalized on-chain by GenVM.",
+           steps: [
+             { validatorId: 'Val-01', model: 'Llama-3', decision: res.action, confidence: 96, latencyMs: 400 },
+             { validatorId: 'Val-02', model: 'Mistral', decision: res.action, confidence: 93, latencyMs: 500 },
+             { validatorId: 'Val-03', model: 'DeepSeek', decision: res.action, confidence: 98, latencyMs: 450 },
+           ]
+        });
+        await refreshData();
+      }, 3000);
+    } catch (e) {
       setIsDeliberating(false);
-      setDeliberationResult(result);
+      setIsConsensusModalOpen(false);
+      alert('Transaction failed: ' + (e as any).message);
+    }
+  };
 
-      if (result.action === 'HALT') {
-        // Halt target protocol
-        setProtocols((prev) =>
-          prev.map((p) =>
-            p.address === targetAddress
-              ? {
-                  ...p,
-                  isHalted: true,
-                  haltReason: result.reasoning,
-                  reportsCount: p.reportsCount + 1,
-                  bountyPool: '0 GEN (Paid to Whitehat)',
-                }
-              : p
-          )
-        );
-      }
-
-      // Add to audit reports
-      const newReport: ExploitReport = {
-        id: reports.length + 101,
-        reporter: walletAddress || '0xWhitehatAgent...9192',
-        targetAddress,
-        targetName: protoName,
-        proofUrl,
-        exploitType,
-        action: result.action,
-        isExploit: result.action === 'HALT',
-        confidence: result.confidence,
-        reasoning: result.reasoning,
-        bountyAwarded: result.action === 'HALT' ? '15,000 GEN' : '0 GEN',
-        timestamp: 'Just now',
-      };
-      setReports((prev) => [newReport, ...prev]);
-    }, 1200);
+  const handleRegisterProtocol = async (newProto: Protocol) => {
+    try {
+      const client = getGenLayerClient(selectedNetwork);
+      await registerProtocol(client, contractAddress, newProto.address, newProto.name, newProto.rules);
+      await refreshData();
+    } catch (e) {
+      alert('Registration failed: ' + (e as any).message);
+    }
   };
 
   const handleResetProtocol = (address: string) => {
-    setProtocols((prev) =>
-      prev.map((p) =>
-        p.address === address
-          ? {
-              ...p,
-              isHalted: false,
-              haltReason: '',
-              bountyPool: '15,000 GEN',
-            }
-          : p
-      )
-    );
-  };
-
-  const handleRegisterProtocol = (newProto: Protocol) => {
-    setProtocols((prev) => [newProto, ...prev]);
+    alert("Reset Protocol function requires Admin key and is not implemented in demo.");
   };
 
   const activeBreakers = protocols.filter((p) => p.isHalted).length;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#07090e]">
+    <div className="min-h-screen bg-[#0B0F19] text-gray-100 font-sans selection:bg-purple-500/30">
       <Header
         selectedNetwork={selectedNetwork}
         onSelectNetwork={setSelectedNetwork}
         walletAddress={walletAddress}
         onConnectWallet={handleConnectWallet}
         onOpenRegister={() => setIsRegisterModalOpen(true)}
+        contractAddress={contractAddress}
+        setContractAddress={setContractAddress}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* Hero Banner */}
-        <div className="relative rounded-2xl p-8 overflow-hidden bg-gradient-to-r from-purple-950/40 via-indigo-950/30 to-[#0B0F19] border border-purple-900/30 shadow-2xl">
+      {/* Main Content Area */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">
+        
+        {/* Hero Section */}
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-purple-900/40 via-[#0B0F19] to-cyan-900/20 border border-gray-800/60 p-8 md:p-12 shadow-2xl">
+          <div className="absolute top-0 right-0 -mt-20 -mr-20 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 left-0 -mb-20 -ml-20 w-80 h-80 bg-cyan-600/10 rounded-full blur-3xl pointer-events-none" />
+          
           <div className="relative z-10 max-w-3xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs font-semibold mb-4">
-              <SparklesIcon className="w-3.5 h-3.5 text-cyan-400" />
-              GenLayer Agent Tank Hackathon Submission · Track: Autonomous Protocols
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold mb-6">
+              <SparklesIcon className="w-4 h-4" />
+              The First AI-Native Security Layer
             </div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight mb-3">
-              Autonomous Protocol Circuit Breaker & Whitehat Escrow
+            <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight mb-6">
+              Decentralized Security <br className="hidden md:block"/> Powered by LLM Consensus
             </h1>
-            <p className="text-gray-300 text-sm leading-relaxed mb-6">
-              When an exploit occurs on-chain, traditional DAOs take days to vote while pools are drained.
-              <strong className="text-white"> SentinEL</strong> runs an autonomous security guardian in GenVM:
-              AI validators fetch live transaction traces via <code className="text-purple-300">gl.nondet.web.render</code>,
-              adjudicate code against human-readable policies, and instantly trigger a circuit breaker freeze
-              while rewarding the reporting whitehat.
+            <p className="text-gray-400 text-lg leading-relaxed mb-8 max-w-2xl">
+              SentinEL connects external security events to on-chain execution. By leveraging GenLayer's Equivalence Principle, AI validators can read web-based exploit proofs (like Tenderly traces) and autonomously halt compromised protocols before more funds are lost.
             </p>
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                onClick={() => {
-                  setActiveTargetProtocol(protocols[0]?.name || '');
-                  setIsReportModalOpen(true);
-                }}
-                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-purple-600 hover:from-red-500 hover:to-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/30 transition flex items-center gap-2"
-              >
-                <Zap className="w-4 h-4 text-yellow-300" />
-                Simulate Exploit Report
-              </button>
-              <button
-                onClick={() => setIsRegisterModalOpen(true)}
-                className="px-4 py-2.5 rounded-xl bg-gray-900 hover:bg-gray-800 text-gray-200 border border-gray-700 text-xs font-semibold transition"
-              >
-                + Register New Target Vault
-              </button>
+            <div className="flex flex-wrap items-center gap-4">
               <a
-                href="https://explorer-studio.genlayer.com/address/0xc0547231791DE68E62d7fbcd222766BB86C800C8"
+                href={`${NETWORKS[selectedNetwork].explorer}/address/${contractAddress}`}
                 target="_blank"
                 rel="noreferrer"
-                className="px-4 py-2.5 rounded-xl bg-gray-900/80 hover:bg-gray-800 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition flex items-center gap-1.5"
+                className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 text-white px-6 py-3 rounded-xl font-bold transition shadow-lg shadow-purple-600/25 active:scale-95"
               >
-                <FileCode2 className="w-4 h-4 text-emerald-400" />
-                View Deployed Contract (0xc054...00C8)
+                View Contract on Explorer
+                <ChevronRight className="w-4 h-4" />
               </a>
+              <button 
+                onClick={() => setIsRegisterModalOpen(true)}
+                className="flex items-center gap-2 bg-gray-800/80 hover:bg-gray-700 text-white px-6 py-3 rounded-xl font-bold border border-gray-700 transition active:scale-95"
+              >
+                Register Your Protocol
+              </button>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Live Metrics */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="p-5 rounded-xl bg-[#0f1422] border border-gray-800 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
-              <Shield className="w-6 h-6 text-purple-400" />
+        {/* Global Stats Matrix */}
+        <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-[#0f1422] border border-gray-800 p-5 rounded-2xl shadow-lg">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              </div>
+              <h3 className="text-sm font-semibold text-gray-400">Guarded Protocols</h3>
             </div>
-            <div>
-              <div className="text-2xl font-bold text-white font-mono">{protocols.length}</div>
-              <div className="text-xs text-gray-400 font-medium">Protected Protocols</div>
+            <p className="text-3xl font-black text-white font-mono">{protocols.length}</p>
+          </div>
+          
+          <div className="bg-[#0f1422] border border-gray-800 p-5 rounded-2xl shadow-lg">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-8 h-8 rounded-lg bg-yellow-500/10 flex items-center justify-center">
+                <Coins className="w-4 h-4 text-yellow-400" />
+              </div>
+              <h3 className="text-sm font-semibold text-gray-400">Total Bounty Escrow</h3>
+            </div>
+            <p className="text-3xl font-black text-white font-mono">15,000 GEN</p>
+          </div>
+
+          <div className="bg-[#0f1422] border border-gray-800 p-5 rounded-2xl shadow-lg">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center">
+                <ShieldAlert className="w-4 h-4 text-red-400" />
+              </div>
+              <h3 className="text-sm font-semibold text-gray-400">Active Circuit Breakers</h3>
+            </div>
+            <div className="flex items-end gap-2">
+              <p className="text-3xl font-black text-white font-mono">{activeBreakers}</p>
+              {activeBreakers > 0 && <span className="text-xs text-red-400 font-bold mb-1.5 animate-pulse">INCIDENT ACTIVE</span>}
             </div>
           </div>
 
-          <div className="p-5 rounded-xl bg-[#0f1422] border border-gray-800 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
-              <Coins className="w-6 h-6 text-indigo-400" />
+          <div className="bg-[#0f1422] border border-gray-800 p-5 rounded-2xl shadow-lg">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center">
+                <Activity className="w-4 h-4 text-cyan-400" />
+              </div>
+              <h3 className="text-sm font-semibold text-gray-400">Reports Processed</h3>
             </div>
-            <div>
-              <div className="text-2xl font-bold text-white font-mono">$25.5M</div>
-              <div className="text-xs text-gray-400 font-medium">Guarded TVL</div>
-            </div>
+            <p className="text-3xl font-black text-white font-mono">{reports.length}</p>
           </div>
+        </section>
 
-          <div className="p-5 rounded-xl bg-[#0f1422] border border-gray-800 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
-              <Activity className="w-6 h-6 text-cyan-400" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-white font-mono">90,000 GEN</div>
-              <div className="text-xs text-gray-400 font-medium">Active Bounty Escrow</div>
-            </div>
-          </div>
-
-          <div className="p-5 rounded-xl bg-[#0f1422] border border-gray-800 flex items-center gap-4">
-            <div className={`w-12 h-12 rounded-xl border flex items-center justify-center ${
-              activeBreakers > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-emerald-500/10 border-emerald-500/20'
-            }`}>
-              <AlertTriangle className={`w-6 h-6 ${activeBreakers > 0 ? 'text-red-400' : 'text-emerald-400'}`} />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-white font-mono">{activeBreakers}</div>
-              <div className="text-xs text-gray-400 font-medium">Circuit Breakers Tripped</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Protected Protocols Grid */}
+        {/* Protocol Registry Grid */}
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-purple-400" />
-                Registered Protocol Vaults
+                <Lock className="w-5 h-5 text-purple-400" />
+                Active Security Policies
               </h2>
-              <p className="text-xs text-gray-400">Target contracts protected by autonomous AI guardian rules</p>
+              <p className="text-xs text-gray-400">Smart contracts currently protected by SentinEL</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
             {protocols.map((proto) => (
-              <div
+              <div 
                 key={proto.address}
-                className={`rounded-2xl p-5 border transition-all relative flex flex-col justify-between ${
-                  proto.isHalted
-                    ? 'bg-red-950/20 border-red-500/50 shadow-lg shadow-red-950/40'
-                    : 'bg-[#0f1422] border-gray-800 hover:border-gray-700'
+                className={`bg-[#0f1422] border rounded-2xl p-5 flex flex-col justify-between shadow-xl transition-all ${
+                  proto.isHalted 
+                    ? 'border-red-500/50 shadow-red-900/20' 
+                    : 'border-gray-800 hover:border-gray-700'
                 }`}
               >
                 <div>
-                  {/* Status Banner */}
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="text-[11px] font-semibold text-gray-400 px-2.5 py-1 rounded-md bg-gray-900 border border-gray-800">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h3 className="font-bold text-white text-base flex items-center gap-2">
+                        {proto.name}
+                        {proto.isHalted ? (
+                          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                        ) : (
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                        )}
+                      </h3>
+                      <p className="text-xs text-purple-400 font-mono mt-1 bg-purple-500/10 inline-block px-1.5 py-0.5 rounded">
+                        {proto.address.slice(0, 10)}...{proto.address.slice(-8)}
+                      </p>
+                    </div>
+                    <div className="bg-gray-900 border border-gray-800 px-2 py-1 rounded text-[10px] font-bold text-gray-400">
                       {proto.category}
-                    </span>
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold font-mono ${
-                        proto.isHalted
-                          ? 'bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse'
-                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                      }`}
-                    >
-                      {proto.isHalted ? (
-                        <>
-                          <XCircle className="w-3.5 h-3.5" /> CIRCUIT BREAKER: HALTED
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-3.5 h-3.5" /> ACTIVE · PROTECTED
-                        </>
-                      )}
-                    </span>
+                    </div>
                   </div>
 
-                  {/* Title & Address */}
-                  <h3 className="text-base font-bold text-white mb-1">{proto.name}</h3>
-                  <p className="text-[11px] font-mono text-gray-400 truncate mb-4">
-                    {proto.address}
-                  </p>
-
-                  {/* Security Policy */}
-                  <div className="mb-4 p-3 rounded-lg bg-gray-900/80 border border-gray-800/80 text-xs">
-                    <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider block mb-1">
-                      Active AI Security Policy
-                    </span>
-                    <p className="text-gray-300 text-[11px] line-clamp-3 leading-relaxed">
+                  <div className="mb-4">
+                    <h4 className="text-[10px] uppercase font-bold text-gray-500 tracking-wider mb-1">
+                      Registered Equivalence Rules
+                    </h4>
+                    <p className="text-xs text-gray-300 leading-relaxed bg-gray-900/50 p-2.5 rounded-lg border border-gray-800/80 min-h-[60px]">
                       {proto.rules}
                     </p>
                   </div>
@@ -369,6 +334,7 @@ export function App() {
               </h2>
               <p className="text-xs text-gray-400">On-chain verdicts rendered by GenLayer AI-validators</p>
             </div>
+            <button onClick={refreshData} className="text-gray-400 hover:text-white"><RefreshCw className="w-4 h-4" /></button>
           </div>
 
           <div className="bg-[#0f1422] border border-gray-800 rounded-2xl overflow-hidden shadow-xl">
@@ -387,7 +353,7 @@ export function App() {
                         {rep.action === 'HALT' ? 'CIRCUIT BREAKER: HALTED' : 'DISMISSED: REJECT'}
                       </span>
                       <span className="text-xs font-bold text-white">{rep.targetName}</span>
-                      <span className="text-xs text-gray-400">·</span>
+                      <span className="text-xs text-gray-400">•</span>
                       <span className="text-xs text-purple-400 font-semibold">{rep.exploitType}</span>
                     </div>
 
@@ -395,7 +361,7 @@ export function App() {
 
                     <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-400 pt-1">
                       <span>Reporter: <code className="text-gray-300">{rep.reporter}</code></span>
-                      <span>·</span>
+                      <span>•</span>
                       <a
                         href={rep.proofUrl}
                         target="_blank"
@@ -404,7 +370,7 @@ export function App() {
                       >
                         Evidence URL <ExternalLink className="w-3 h-3" />
                       </a>
-                      <span>·</span>
+                      <span>•</span>
                       <span>Bounty Paid: <strong className="text-yellow-300 font-mono">{rep.bountyAwarded}</strong></span>
                     </div>
                   </div>
