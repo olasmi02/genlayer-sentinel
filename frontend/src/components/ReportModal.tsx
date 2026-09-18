@@ -126,10 +126,14 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               type="url"
               value={proofUrl}
               onChange={(e) => setProofUrl(e.target.value)}
-              placeholder="https://etherscan.io/tx/0x... or https://tenderly.co/tx/..."
+              placeholder="https://tenderly.co/tx/... or verified github security disclosure"
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-purple-500 font-mono"
               required
             />
+            <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500">
+              <span>Whitelisted Oracles: Tenderly, Etherscan, Blockscout, GitHub Security</span>
+              <span className="text-yellow-400 font-mono">Anti-Griefing Stake: 500 GEN</span>
+            </div>
           </div>
 
           <div>

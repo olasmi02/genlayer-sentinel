@@ -107,28 +107,39 @@ export function App() {
       const onChainProtocols = await fetchProtocols(client, contractAddress);
       const latestReport = onChainReports.length > 0 ? onChainReports[0] : null;
 
-      // 3. Live Web Verification: Actually fetch and inspect the evidence URL
+      // 3. Anti-Spoofing & Live Web Verification
+      const normalizedUrl = proofUrl.trim().toLowerCase();
+      let domain = '';
+      try {
+        domain = new URL(normalizedUrl).hostname.toLowerCase();
+      } catch (e) {
+        domain = normalizedUrl;
+      }
+
+      // Check Domain Whitelist against spoofing
+      const WHITELISTED_DOMAINS = ['etherscan.io', 'tenderly.co', 'blockscout.com', 'githubusercontent.com', 'defillama.com'];
+      const isWhitelistedOrigin = WHITELISTED_DOMAINS.some(d => domain.includes(d));
+
       let isUnreachable = false;
       let fetchedContent = '';
 
-      try {
-        const fetchRes = await fetch(proofUrl, { method: 'GET' });
-        if (!fetchRes.ok) {
+      if (isWhitelistedOrigin) {
+        try {
+          const fetchRes = await fetch(proofUrl, { method: 'GET' });
+          if (!fetchRes.ok) {
+            isUnreachable = true;
+          } else {
+            fetchedContent = (await fetchRes.text()).slice(0, 4000).toLowerCase();
+          }
+        } catch (err) {
           isUnreachable = true;
-        } else {
-          fetchedContent = (await fetchRes.text()).slice(0, 4000).toLowerCase();
         }
-      } catch (err) {
-        // If domain is unreachable, does not exist (e.g. 123.com), or returns error
-        isUnreachable = true;
       }
 
       const combinedTrace = (evidenceTrace + ' ' + exploitType).toLowerCase();
       
-      // An exploit is ONLY verified if:
-      // - The URL is reachable (not 404) and its actual text contains exploit disclosures (exploit, drain, vulnerability, flashloan)
-      // - Or the trace explicitly documents a reentrancy drain
-      const hasExploitInWeb = !isUnreachable && (
+      // Determine if evidence genuinely proves an exploit from an authenticated source:
+      const hasExploitInWeb = isWhitelistedOrigin && !isUnreachable && (
         fetchedContent.includes('exploit') || 
         fetchedContent.includes('vulnerability') || 
         fetchedContent.includes('drain') || 
@@ -138,25 +149,37 @@ export function App() {
       const hasExploitInTrace = combinedTrace.includes('drained') || 
                                 (combinedTrace.includes('recursive') && combinedTrace.includes('withdraw'));
 
-      const isVerifiedExploit = hasExploitInWeb || hasExploitInTrace;
-
-      const finalAction: 'HALT' | 'REJECT' = latestReport 
-        ? latestReport.action 
-        : (isVerifiedExploit ? 'HALT' : 'REJECT');
-
-      const confidence = latestReport 
-        ? latestReport.confidence 
-        : (finalAction === 'HALT' ? 98 : (isUnreachable ? 99 : 92));
-
+      // If domain is NOT whitelisted (e.g. personal blog, fake site), it is strictly rejected to prevent spoofing!
+      let finalAction: 'HALT' | 'REJECT' = 'REJECT';
+      let confidence = 94;
       let reasoning = '';
+      let bountyText = '0 GEN';
+
       if (latestReport) {
+        finalAction = latestReport.action;
+        confidence = latestReport.confidence;
         reasoning = latestReport.reasoning;
+        bountyText = latestReport.bountyAwarded;
+      } else if (!isWhitelistedOrigin) {
+        finalAction = 'REJECT';
+        confidence = 99;
+        reasoning = `Anti-Spoofing Shield: Source domain (${domain || 'unverified'}) is not an approved oracle. Unverified personal sites are rejected to prevent griefing attacks. 500 GEN stake slashed.`;
+        bountyText = '0 GEN (Stake Slashed: -500 GEN)';
       } else if (isUnreachable) {
-        reasoning = `AI Validators inspected evidence URL (${proofUrl}): Source returned 404 Not Found or is unreachable. Zero valid evidence found. Dismissed as unverified.`;
-      } else if (finalAction === 'HALT') {
-        reasoning = `AI Validators fetched live evidence: Exploit report verified against protocol invariants. Unauthorized fund extraction confirmed. Circuit breaker engaged.`;
+        finalAction = 'REJECT';
+        confidence = 99;
+        reasoning = `AI Validators inspected verified source (${domain}): Evidence URL returned 404 Not Found or is unreachable. Zero valid proof. Dismissed as unverified.`;
+        bountyText = '0 GEN (Stake Refunded)';
+      } else if (hasExploitInWeb || hasExploitInTrace) {
+        finalAction = 'HALT';
+        confidence = 98;
+        reasoning = `AI Validators verified live exploit proof from authorized oracle (${domain}): Exploit confirmed against protocol invariants. Circuit breaker engaged.`;
+        bountyText = '15,000 GEN (+500 GEN Stake Refunded)';
       } else {
-        reasoning = `AI Validators inspected evidence URL (${proofUrl}): Page loaded successfully but describes no unauthorized drain, signature bypass, or rule violation. Dismissed as false alarm.`;
+        finalAction = 'REJECT';
+        confidence = 92;
+        reasoning = `AI Validators inspected verified source (${domain}): Page loaded successfully but describes no unauthorized drain, signature bypass, or rule violation. Dismissed as false alarm.`;
+        bountyText = '0 GEN (Stake Refunded)';
       }
       // 4. Build validator steps directly from the actual on-chain validator addresses
       const rawValidators = onChainTx.validators.length > 0 ? onChainTx.validators : [
@@ -220,7 +243,7 @@ export function App() {
           isExploit: finalAction === 'HALT',
           confidence,
           reasoning,
-          bountyAwarded: finalAction === 'HALT' ? '15,000 GEN' : '0 GEN',
+          bountyAwarded: bountyText,
           timestamp: 'Just now',
         };
         setReports(prev => [newReport, ...prev]);
