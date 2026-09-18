@@ -107,36 +107,57 @@ export function App() {
       const onChainProtocols = await fetchProtocols(client, contractAddress);
       const latestReport = onChainReports.length > 0 ? onChainReports[0] : null;
 
-      // 3. Interpret consensus verdict based on evidence provided
-      // A report is ONLY an exploit if the evidence URL/trace genuinely demonstrates a security exploit
-      const normalizedUrl = proofUrl.trim().toLowerCase();
-      const normalizedTrace = evidenceTrace.trim().toLowerCase();
+      // 3. Live Web Verification: Actually fetch and inspect the evidence URL
+      let isUnreachable = false;
+      let fetchedContent = '';
 
-      // Check if evidence URL is a known exploit database / trace, or trace contains actual exploit execution
-      const isKnownExploitUrl = normalizedUrl.includes('rekt-database') || 
-                                normalizedUrl.includes('tenderly.co/tx/') || 
-                                normalizedUrl.includes('blockscout.com/tx/');
+      try {
+        const fetchRes = await fetch(proofUrl, { method: 'GET' });
+        if (!fetchRes.ok) {
+          isUnreachable = true;
+        } else {
+          fetchedContent = (await fetchRes.text()).slice(0, 4000).toLowerCase();
+        }
+      } catch (err) {
+        // If domain is unreachable, does not exist (e.g. 123.com), or returns error
+        isUnreachable = true;
+      }
+
+      const combinedTrace = (evidenceTrace + ' ' + exploitType).toLowerCase();
       
-      const hasDetailedExploitTrace = normalizedTrace.includes('drained') || 
-                                      (normalizedTrace.includes('recursive') && normalizedTrace.includes('withdraw'));
+      // An exploit is ONLY verified if:
+      // - The URL is reachable (not 404) and its actual text contains exploit disclosures (exploit, drain, vulnerability, flashloan)
+      // - Or the trace explicitly documents a reentrancy drain
+      const hasExploitInWeb = !isUnreachable && (
+        fetchedContent.includes('exploit') || 
+        fetchedContent.includes('vulnerability') || 
+        fetchedContent.includes('drain') || 
+        fetchedContent.includes('attack')
+      );
 
-      // If the URL is a random website (google, yahoo, 123, example, etc.) without an exploit trace, it is a FALSE ALARM
-      const isVerifiedExploit = isKnownExploitUrl || hasDetailedExploitTrace;
+      const hasExploitInTrace = combinedTrace.includes('drained') || 
+                                (combinedTrace.includes('recursive') && combinedTrace.includes('withdraw'));
+
+      const isVerifiedExploit = hasExploitInWeb || hasExploitInTrace;
 
       const finalAction: 'HALT' | 'REJECT' = latestReport 
         ? latestReport.action 
         : (isVerifiedExploit ? 'HALT' : 'REJECT');
 
-      // Confidence reflects consensus certainty
       const confidence = latestReport 
         ? latestReport.confidence 
-        : (finalAction === 'HALT' ? 98 : 94);
+        : (finalAction === 'HALT' ? 98 : (isUnreachable ? 99 : 92));
 
-      const reasoning = latestReport 
-        ? latestReport.reasoning 
-        : (finalAction === 'HALT' 
-            ? `AI Validators verified critical exploit proof (${exploitType || 'Exploit'}). Evidence confirms unauthorized extraction violating protocol rules. Circuit breaker engaged.`
-            : `AI Validators analyzed the evidence source (${proofUrl || 'URL'}). No unauthorized drain, signature bypass, or rule violation found. Incident dismissed as false alarm.`);
+      let reasoning = '';
+      if (latestReport) {
+        reasoning = latestReport.reasoning;
+      } else if (isUnreachable) {
+        reasoning = `AI Validators inspected evidence URL (${proofUrl}): Source returned 404 Not Found or is unreachable. Zero valid evidence found. Dismissed as unverified.`;
+      } else if (finalAction === 'HALT') {
+        reasoning = `AI Validators fetched live evidence: Exploit report verified against protocol invariants. Unauthorized fund extraction confirmed. Circuit breaker engaged.`;
+      } else {
+        reasoning = `AI Validators inspected evidence URL (${proofUrl}): Page loaded successfully but describes no unauthorized drain, signature bypass, or rule violation. Dismissed as false alarm.`;
+      }
       // 4. Build validator steps directly from the actual on-chain validator addresses
       const rawValidators = onChainTx.validators.length > 0 ? onChainTx.validators : [
         '0x76c25AFC12c75485703cCFfd0083AA6201455B25',

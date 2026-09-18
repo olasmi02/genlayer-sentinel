@@ -109,7 +109,7 @@ export const SAMPLE_EXPLOITS = [
     title: 'Flashloan Reentrancy Attack on ApexYield',
     targetAddress: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
     exploitType: 'Reentrancy Drain',
-    proofUrl: 'https://raw.githubusercontent.com/defuse-xyz/rekt-database/main/README.md',
+    proofUrl: 'https://raw.githubusercontent.com/yearn/yearn-security/master/disclosures/2021-02-04.md',
     simulatedTrace: 'Flashloan 4,000,000 USDC from Aave -> Call deposit() -> Call emergencyWithdraw() recursively in fallback -> Drained 2,400,000 USDC reserve without collateral check.',
     expectedVerdict: 'HALT' as const,
     reasoning: 'Confirmed critical reentrancy exploit: recursive call trace bypassed health factor checks and drained $2.4M reserve.',
