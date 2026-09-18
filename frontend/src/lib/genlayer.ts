@@ -6,13 +6,13 @@ export const NETWORKS = {
     name: 'GenLayer Studio Next',
     chainId: 61997,
     rpcUrl: 'https://studio-dev.genlayer.com/api',
-    explorer: 'https://explorer.studio-dev.genlayer.com',
+    explorer: 'https://explorer-studio.genlayer.com',
     currency: 'GEN',
     chainConfig: {
       ...chains.studionet,
       id: 61997,
       name: 'Studio Next',
-      rpcUrls: { default: { http: ['https://studio-dev.genlayer.com/api'] } }
+      rpcUrls: { default: { http: ['https://studio.genlayer.com/api'] } }
     }
   },
   studionet: {
