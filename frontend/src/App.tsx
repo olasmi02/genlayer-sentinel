@@ -119,7 +119,7 @@ export function App() {
         : (updatedTarget?.isHalted || isEvidentExploit ? 'HALT' : 'REJECT');
 
       // Generate dynamic realistic confidence based on evidence quality
-      const baseConfidence = latestReport 
+      const confidence = latestReport 
         ? latestReport.confidence 
         : (finalAction === 'HALT' ? Math.floor(96 + Math.random() * 3) : Math.floor(90 + Math.random() * 5));
 
@@ -136,12 +136,12 @@ export function App() {
       setIsDeliberating(false);
       setDeliberationResult({
         action: finalAction,
-        confidence: baseConfidence,
+        confidence: confidence,
         reasoning,
         steps: [
-          { validatorId: 'Val-01 (Leader: Stakeme)', model: 'Llama-3.3-70B', decision: finalAction, confidence: baseConfidence, latencyMs: val1Latency },
-          { validatorId: 'Val-02 (Crouton Digital)', model: 'Mistral-Large', decision: finalAction, confidence: Math.max(85, baseConfidence - Math.floor(Math.random() * 3) - 1), latencyMs: val2Latency },
-          { validatorId: 'Val-03 (Pathrock)', model: 'DeepSeek-R1', decision: finalAction, confidence: Math.min(99, baseConfidence + Math.floor(Math.random() * 2)), latencyMs: val3Latency },
+          { validatorId: 'Val-01 (Leader: Stakeme)', model: 'Llama-3.3-70B', decision: finalAction, confidence: confidence, latencyMs: val1Latency },
+          { validatorId: 'Val-02 (Crouton Digital)', model: 'Mistral-Large', decision: finalAction, confidence: Math.max(85, confidence - Math.floor(Math.random() * 3) - 1), latencyMs: val2Latency },
+          { validatorId: 'Val-03 (Pathrock)', model: 'DeepSeek-R1', decision: finalAction, confidence: Math.min(99, confidence + Math.floor(Math.random() * 2)), latencyMs: val3Latency },
         ]
       });
       if (onChainProtocols.length > 0) {
