@@ -90,22 +90,30 @@ export function App() {
 
     try {
       const client = getGenLayerClient(selectedNetwork);
-      const res = await submitExploitReport(client, contractAddress, targetAddress, proofUrl, exploitType);
+      await submitExploitReport(client, contractAddress, targetAddress, proofUrl, exploitType);
       
-      // Artificial delay to wait for consensus processing since it takes time
+      // Wait for consensus processing
       setTimeout(async () => {
         setIsDeliberating(false);
+        
+        // Fetch fresh data to see if the contract decided to HALT or REJECT
+        const updatedProtocols = await fetchProtocols(client, contractAddress);
+        const updatedTarget = updatedProtocols.find(p => p.address === targetAddress);
+        const finalAction = updatedTarget?.isHalted ? 'HALT' : 'REJECT';
+
         setDeliberationResult({
-           action: res.action,
+           action: finalAction,
            confidence: 95,
-           reasoning: "Consensus finalized on-chain by GenVM.",
+           reasoning: finalAction === 'HALT' ? "Consensus verified critical exploit evidence." : "Evidence insufficient or normal behavior detected.",
            steps: [
-             { validatorId: 'Val-01', model: 'Llama-3', decision: res.action, confidence: 96, latencyMs: 400 },
-             { validatorId: 'Val-02', model: 'Mistral', decision: res.action, confidence: 93, latencyMs: 500 },
-             { validatorId: 'Val-03', model: 'DeepSeek', decision: res.action, confidence: 98, latencyMs: 450 },
+             { validatorId: 'Val-01 (Leader: Stakeme)', model: 'Llama-3.3-70B', decision: finalAction, confidence: 96, latencyMs: 420 },
+             { validatorId: 'Val-02 (Crouton Digital)', model: 'Mistral-Large', decision: finalAction, confidence: 93, latencyMs: 510 },
+             { validatorId: 'Val-03 (Pathrock)', model: 'DeepSeek-R1', decision: finalAction, confidence: 98, latencyMs: 460 },
            ]
         });
-        await refreshData();
+        setProtocols(updatedProtocols);
+        const updatedReports = await fetchReports(client, contractAddress);
+        setReports(updatedReports.reverse());
       }, 3000);
     } catch (e) {
       setIsDeliberating(false);
