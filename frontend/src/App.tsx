@@ -154,7 +154,7 @@ export function App() {
           model: isLeader ? 'Lead Consensus Evaluator' : 'Equivalence Validator',
           decision: finalAction,
           confidence: voteName === 'AGREE' ? confidence : Math.max(0, confidence - 20),
-          latencyMs: Math.round(onChainTx.durationMs / totalValidators) || (350 + idx * 60)
+          latencyMs: Math.round(onChainTx.durationMs / rawValidators.length) || (350 + idx * 60)
         };
       });
 
