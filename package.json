@@ -5,7 +5,8 @@
   "scripts": {
     "test": "python -m pytest tests/direct/test_sentinel.py -v",
     "dev": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build"
+    "build": "cd frontend && npm run build",
+    "deploy": "node scripts/deploy.mjs"
   },
   "keywords": [
     "genlayer",

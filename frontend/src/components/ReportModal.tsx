@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ShieldAlert, Zap, X, Globe, FileCode2, Terminal } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ShieldAlert, Zap, X, Globe } from 'lucide-react';
 import { Protocol } from '../lib/types';
 import { SAMPLE_EXPLOITS } from '../lib/genlayer';
 
@@ -7,33 +7,41 @@ interface ReportModalProps {
   isOpen: boolean;
   onClose: () => void;
   protocols: Protocol[];
-  onTriggerReport: (targetAddress: string, proofUrl: string, exploitType: string, trace: string) => void;
+  initialTarget?: string;
+  onTriggerReport: (targetAddress: string, proofUrl: string, exploitType: string) => void;
 }
 
 export const ReportModal: React.FC<ReportModalProps> = ({
   isOpen,
   onClose,
   protocols,
+  initialTarget,
   onTriggerReport,
 }) => {
   const [selectedTarget, setSelectedTarget] = useState(protocols[0]?.address || '');
   const [proofUrl, setProofUrl] = useState('');
   const [exploitType, setExploitType] = useState('Reentrancy Drain');
-  const [evidenceTrace, setEvidenceTrace] = useState('');
+
+  // Match addresses case-insensitively: on-chain addresses are lowercase, presets are checksummed
+  const resolveTarget = (addr?: string) =>
+    protocols.find((p) => p.address.toLowerCase() === (addr || '').toLowerCase())?.address || protocols[0]?.address || '';
+
+  useEffect(() => {
+    if (isOpen) setSelectedTarget(resolveTarget(initialTarget));
+  }, [isOpen, initialTarget, protocols]);
 
   if (!isOpen) return null;
 
   const handleSelectPreset = (sample: typeof SAMPLE_EXPLOITS[0]) => {
-    setSelectedTarget(sample.targetAddress);
+    setSelectedTarget(resolveTarget(sample.targetAddress));
     setProofUrl(sample.proofUrl);
     setExploitType(sample.exploitType);
-    setEvidenceTrace(sample.simulatedTrace);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTarget || !proofUrl) return;
-    onTriggerReport(selectedTarget, proofUrl, exploitType, evidenceTrace);
+    onTriggerReport(selectedTarget, proofUrl, exploitType);
     onClose();
   };
 
@@ -131,23 +139,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               required
             />
             <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500">
-              <span>Whitelisted Oracles: Tenderly, Etherscan, Blockscout, GitHub Security</span>
-              <span className="text-yellow-400 font-mono">Anti-Griefing Stake: 500 GEN</span>
+              <span>Whitelisted Oracles: Etherscan, Tenderly, Blockscout, GitHub (raw), DefiLlama</span>
+              <span className="text-yellow-400 font-mono">Anti-Griefing Stake: slashed if source is spoofed</span>
             </div>
-          </div>
-
-          <div>
-            <label className="block text-gray-400 font-semibold mb-1 flex items-center gap-1.5">
-              <Terminal className="w-3.5 h-3.5 text-cyan-400" />
-              Evidence Trace Logs / Call Hierarchy
-            </label>
-            <textarea
-              rows={3}
-              value={evidenceTrace}
-              onChange={(e) => setEvidenceTrace(e.target.value)}
-              placeholder="Paste relevant call trace, reentrancy steps, or decompiled call data..."
-              className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-gray-200 focus:outline-none focus:border-purple-500 font-mono text-[11px]"
-            />
           </div>
 
           <div className="pt-2 flex items-center justify-end gap-3">

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ShieldCheck, X, PlusCircle, Coins } from 'lucide-react';
 import { Protocol } from '../lib/types';
+import { parseGen } from '../lib/genlayer';
 
 interface RegisterModalProps {
   isOpen: boolean;
@@ -32,6 +33,7 @@ export const RegisterModal: React.FC<RegisterModalProps> = ({
       category,
       rules,
       bountyPool,
+      bountyPoolWei: parseGen(bountyPool).toString(),
       tvl,
       isHalted: false,
       haltReason: '',

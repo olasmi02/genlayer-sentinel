@@ -13,8 +13,9 @@ class Address(str):
     @property
     def as_hex(self):
         return str(self)
-    def emit_transfer(self, value):
-        pass
+
+# Records every native transfer emitted by a contract as (recipient, value)
+TRANSFERS = []
 
 class TreeMap(dict):
     pass
@@ -40,7 +41,10 @@ class MockWeb:
     def __init__(self):
         self.responses = {}
     def render(self, url, mode='text'):
-        return self.responses.get(url, "Mock Web Page Content for " + url)
+        resp = self.responses.get(url, "Mock Web Page Content for " + url)
+        if isinstance(resp, Exception):
+            raise resp
+        return resp
 
 class MockNondet:
     def __init__(self):
@@ -56,6 +60,18 @@ class MockNondet:
 class MockEqPrinciple:
     def strict_eq(self, fn):
         return fn()
+    def prompt_comparative(self, fn, principle):
+        return fn()
+
+class MockEvm:
+    @staticmethod
+    def contract_interface(cls):
+        class _Proxy:
+            def __init__(self, address):
+                self.address = address
+            def emit_transfer(self, value, on='finalized'):
+                TRANSFERS.append((str(self.address), int(value)))
+        return _Proxy
 
 class MockPublic:
     @staticmethod
@@ -78,6 +94,7 @@ class MockGL:
         self.nondet = MockNondet()
         self.eq_principle = MockEqPrinciple()
         self.public = MockPublic()
+        self.evm = MockEvm()
 
     class Contract:
         pass

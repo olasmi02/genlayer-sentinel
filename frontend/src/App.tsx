@@ -25,48 +25,68 @@ import { ConsensusModal } from './components/ConsensusModal';
 import {
   NETWORKS,
   INITIAL_PROTOCOLS,
-  INITIAL_REPORTS,
+  DEFAULT_CONTRACT_ADDRESS,
+  DEMO_ACCOUNT_ADDRESS,
   getGenLayerClient,
   fetchProtocols,
   fetchReports,
+  formatGen,
+  parseGen,
   registerProtocol,
+  resetCircuitBreaker,
   submitExploitReport
 } from './lib/genlayer';
 import { Protocol, ExploitReport } from './lib/types';
 
+type ContractStatus = 'checking' | 'live' | 'missing';
+
 export function App() {
   const [selectedNetwork, setSelectedNetwork] = useState<keyof typeof NETWORKS>('studionext');
-  const [walletAddress, setWalletAddress] = useState<string | null>('0xf39F...2266');
-  const [contractAddress, setContractAddress] = useState<string>('0xc0547231791DE68E62d7fbcd222766BB86C800C8');
+  const [walletAddress, setWalletAddress] = useState<string | null>(DEMO_ACCOUNT_ADDRESS);
+  const [contractAddress, setContractAddress] = useState<string>(DEFAULT_CONTRACT_ADDRESS);
+  const [contractStatus, setContractStatus] = useState<ContractStatus>('checking');
+  const [contractError, setContractError] = useState<string>('');
   const [protocols, setProtocols] = useState<Protocol[]>(INITIAL_PROTOCOLS);
-  const [reports, setReports] = useState<ExploitReport[]>(INITIAL_REPORTS);
+  const [reports, setReports] = useState<ExploitReport[]>([]);
 
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [isConsensusModalOpen, setIsConsensusModalOpen] = useState(false);
   const [activeTargetProtocol, setActiveTargetProtocol] = useState<string>('');
+  const [reportTarget, setReportTarget] = useState<string>('');
 
   const [isDeliberating, setIsDeliberating] = useState(false);
   const [deliberationResult, setDeliberationResult] = useState<any>(null);
-  
-  const refreshData = async () => {
-    if (!contractAddress || contractAddress.length !== 42) return;
+  const [deliberationError, setDeliberationError] = useState<string>('');
+
+  // Returns the freshly loaded on-chain state so callers don't depend on stale React state
+  const refreshData = async (): Promise<{ protocols: Protocol[]; reports: ExploitReport[] } | null> => {
+    if (!contractAddress || contractAddress.length !== 42) {
+      setContractStatus('missing');
+      setContractError('Enter a 42-character contract address.');
+      return null;
+    }
     try {
       const client = getGenLayerClient(selectedNetwork);
       const p = await fetchProtocols(client, contractAddress);
-      if (p && p.length > 0) {
-        setProtocols(p);
-      }
-      const r = await fetchReports(client, contractAddress);
-      if (r && r.length > 0) {
-        setReports(r.reverse());
-      }
-    } catch (e) {
-      console.warn("Using default protocol data:", e);
+      const r = await fetchReports(client, contractAddress, p);
+      setProtocols(p);
+      setReports(r);
+      setContractStatus('live');
+      setContractError('');
+      return { protocols: p, reports: r };
+    } catch (e: any) {
+      console.warn('SentinEL contract unreachable:', e);
+      setContractStatus('missing');
+      setContractError(e?.shortMessage || e?.details || e?.message || String(e));
+      setProtocols(INITIAL_PROTOCOLS);
+      setReports([]);
+      return null;
     }
   };
 
   useEffect(() => {
+    setContractStatus('checking');
     refreshData();
   }, [selectedNetwork, contractAddress]);
 
@@ -74,210 +94,87 @@ export function App() {
     if (walletAddress) {
       setWalletAddress(null);
     } else {
-      setWalletAddress('0xf39F...2266');
+      setWalletAddress(DEMO_ACCOUNT_ADDRESS);
     }
   };
 
+  const requireLiveContract = () => {
+    if (contractStatus === 'live') return true;
+    alert(
+      `SentinEL contract is not reachable at ${contractAddress} on ${NETWORKS[selectedNetwork].name}.\n\n` +
+      `Deploy it with "npm run deploy" (repo root) or paste a deployed address in the header.\n\n${contractError}`
+    );
+    return false;
+  };
+
   const handleOpenReportForProtocol = (addr: string) => {
-    setActiveTargetProtocol(addr);
+    setReportTarget(addr);
     setIsReportModalOpen(true);
   };
 
-  const handleTriggerReport = async (
-    targetAddress: string,
-    proofUrl: string,
-    exploitType: string,
-    evidenceTrace: string
-  ) => {
-    const targetProto = protocols.find((p) => p.address === targetAddress);
-    const protoName = targetProto?.name || 'Target Protocol';
-    setActiveTargetProtocol(protoName);
+  const handleTriggerReport = async (targetAddress: string, proofUrl: string, exploitType: string) => {
+    if (!requireLiveContract()) return;
+    const targetProto = protocols.find((p) => p.address.toLowerCase() === targetAddress.toLowerCase());
+    setActiveTargetProtocol(targetProto?.name || targetAddress);
     setIsConsensusModalOpen(true);
     setIsDeliberating(true);
     setDeliberationResult(null);
+    setDeliberationError('');
 
     try {
       const client = getGenLayerClient(selectedNetwork);
+      const previousLatestId = reports.length > 0 ? reports[0].id : -1;
 
-      // 1. Submit on-chain transaction to GenLayer
+      // 1. Submit the staked report; validators fetch the evidence and reach consensus on-chain
       const onChainTx = await submitExploitReport(client, contractAddress, targetAddress, proofUrl, exploitType);
 
-      // 2. Query the contract for verified reports
-      const onChainReports = await fetchReports(client, contractAddress);
-      const onChainProtocols = await fetchProtocols(client, contractAddress);
-      const latestReport = onChainReports.length > 0 ? onChainReports[0] : null;
-
-      // 3. Anti-Spoofing & Live Web Verification
-      const normalizedUrl = proofUrl.trim().toLowerCase();
-      let domain = '';
-      try {
-        domain = new URL(normalizedUrl).hostname.toLowerCase();
-      } catch (e) {
-        domain = normalizedUrl;
-      }
-
-      // Check Domain Whitelist against spoofing
-      const WHITELISTED_DOMAINS = ['etherscan.io', 'tenderly.co', 'blockscout.com', 'githubusercontent.com', 'defillama.com'];
-      const isWhitelistedOrigin = WHITELISTED_DOMAINS.some(d => domain.includes(d));
-
-      let isUnreachable = false;
-      let fetchedContent = '';
-
-      if (isWhitelistedOrigin) {
-        try {
-          const fetchRes = await fetch(proofUrl, { method: 'GET' });
-          if (!fetchRes.ok) {
-            isUnreachable = true;
-          } else {
-            fetchedContent = (await fetchRes.text()).slice(0, 4000).toLowerCase();
-          }
-        } catch (err) {
-          isUnreachable = true;
-        }
-      }
-
-      const combinedTrace = (evidenceTrace + ' ' + exploitType).toLowerCase();
-      
-      // Determine if evidence genuinely proves an exploit from an authenticated source:
-      const hasExploitInWeb = isWhitelistedOrigin && !isUnreachable && (
-        fetchedContent.includes('exploit') || 
-        fetchedContent.includes('vulnerability') || 
-        fetchedContent.includes('drain') || 
-        fetchedContent.includes('attack')
+      // 2. The verdict is whatever the contract recorded: read the newest report back
+      const fresh = await refreshData();
+      const latestReport = fresh?.reports.find(
+        (r) => r.id > previousLatestId && r.targetAddress === targetAddress.toLowerCase()
       );
-
-      const hasExploitInTrace = combinedTrace.includes('drained') || 
-                                (combinedTrace.includes('recursive') && combinedTrace.includes('withdraw'));
-
-      // If domain is NOT whitelisted (e.g. personal blog, fake site), it is strictly rejected to prevent spoofing!
-      let finalAction: 'HALT' | 'REJECT' = 'REJECT';
-      let confidence = 94;
-      let reasoning = '';
-      let bountyText = '0 GEN';
-
-      if (latestReport) {
-        finalAction = latestReport.action;
-        confidence = latestReport.confidence;
-        reasoning = latestReport.reasoning;
-        bountyText = latestReport.bountyAwarded;
-      } else if (!isWhitelistedOrigin) {
-        finalAction = 'REJECT';
-        confidence = 99;
-        reasoning = `Anti-Spoofing Shield: Source domain (${domain || 'unverified'}) is not an approved oracle. Unverified personal sites are rejected to prevent griefing attacks. 500 GEN stake slashed.`;
-        bountyText = '0 GEN (Stake Slashed: -500 GEN)';
-      } else if (isUnreachable) {
-        finalAction = 'REJECT';
-        confidence = 99;
-        reasoning = `AI Validators inspected verified source (${domain}): Evidence URL returned 404 Not Found or is unreachable. Zero valid proof. Dismissed as unverified.`;
-        bountyText = '0 GEN (Stake Refunded)';
-      } else if (hasExploitInWeb || hasExploitInTrace) {
-        finalAction = 'HALT';
-        confidence = 98;
-        reasoning = `AI Validators verified live exploit proof from authorized oracle (${domain}): Exploit confirmed against protocol invariants. Circuit breaker engaged.`;
-        bountyText = '15,000 GEN (+500 GEN Stake Refunded)';
-      } else {
-        finalAction = 'REJECT';
-        confidence = 92;
-        reasoning = `AI Validators inspected verified source (${domain}): Page loaded successfully but describes no unauthorized drain, signature bypass, or rule violation. Dismissed as false alarm.`;
-        bountyText = '0 GEN (Stake Refunded)';
+      if (!latestReport) {
+        throw new Error(`Transaction ${onChainTx.txHash} was accepted but no new report was recorded on-chain.`);
       }
-      // 4. Build validator steps directly from the actual on-chain validator addresses
-      const rawValidators = onChainTx.validators.length > 0 ? onChainTx.validators : [
-        '0x76c25AFC12c75485703cCFfd0083AA6201455B25',
-        '0xcE1d6bBB36B744536153966B4DD42276f5ADd0F8',
-        '0x36728d2a123aB444E603EE5b2ad17d18Bb193557',
-        '0x9ea87b28DcA2F79fe108CF06a4c13B4c876AC23d',
-        '0xBBb165E4c9d73a1493D363280f7067Cd07891dBE'
-      ];
 
-      const steps = rawValidators.slice(0, 3).map((vAddr, idx) => {
-        const isLeader = onChainTx.leader ? vAddr.toLowerCase() === onChainTx.leader.toLowerCase() : idx === 0;
-        const voteName = onChainTx.votes[idx] || 'AGREE';
-        return {
-          validatorId: `${vAddr.slice(0, 8)}...${vAddr.slice(-6)}${isLeader ? ' (Leader Node)' : ''}`,
-          model: isLeader ? 'Lead Consensus Evaluator' : 'Equivalence Validator',
-          decision: finalAction,
-          confidence: voteName === 'AGREE' ? confidence : Math.max(0, confidence - 20),
-          latencyMs: Math.round(onChainTx.durationMs / rawValidators.length) || (350 + idx * 60)
-        };
-      });
-
-      setIsDeliberating(false);
       setDeliberationResult({
-        action: finalAction,
-        confidence,
-        reasoning,
-        steps
+        action: latestReport.action,
+        confidence: latestReport.confidence,
+        reasoning: latestReport.reasoning,
+        bountyAwarded: latestReport.bountyAwarded,
+        stakeOutcome: latestReport.stakeOutcome,
+        txHash: onChainTx.txHash,
+        status: onChainTx.status,
+        durationMs: onChainTx.durationMs,
+        steps: onChainTx.steps
       });
-
-      // Update state
-      if (onChainProtocols.length > 0) {
-        setProtocols(onChainProtocols);
-      } else {
-        if (finalAction === 'HALT') {
-          setProtocols(prev => prev.map(p => 
-            p.address.toLowerCase() === targetAddress.toLowerCase() 
-              ? { ...p, isHalted: true, haltReason: reasoning, reportsCount: p.reportsCount + 1, bountyPool: '0 GEN (Paid to Whitehat)' } 
-              : p
-          ));
-        } else {
-          setProtocols(prev => prev.map(p => 
-            p.address.toLowerCase() === targetAddress.toLowerCase() 
-              ? { ...p, reportsCount: p.reportsCount + 1 } 
-              : p
-          ));
-        }
-      }
-
-      if (onChainReports.length > 0) {
-        setReports(onChainReports);
-      } else {
-        const newReport: ExploitReport = {
-          id: reports.length + 102,
-          reporter: walletAddress || '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
-          targetAddress,
-          targetName: protoName,
-          proofUrl,
-          exploitType,
-          action: finalAction,
-          isExploit: finalAction === 'HALT',
-          confidence,
-          reasoning,
-          bountyAwarded: bountyText,
-          timestamp: 'Just now',
-        };
-        setReports(prev => [newReport, ...prev]);
-      }
     } catch (e: any) {
+      setDeliberationError(e?.shortMessage || e?.message || String(e));
+    } finally {
       setIsDeliberating(false);
-      setIsConsensusModalOpen(false);
-      alert('GenLayer Transaction Error: ' + (e?.message || e));
     }
   };
 
   const handleRegisterProtocol = async (newProto: Protocol) => {
+    if (!requireLiveContract()) return;
     try {
       const client = getGenLayerClient(selectedNetwork);
-      await registerProtocol(client, contractAddress, newProto.address, newProto.name, newProto.rules);
-    } catch (e) {
-      console.warn("On-chain register fallback:", e);
+      await registerProtocol(client, contractAddress, newProto.address, newProto.name, newProto.rules, parseGen(newProto.bountyPool));
+      await refreshData();
+    } catch (e: any) {
+      alert('Protocol registration failed: ' + (e?.shortMessage || e?.message || e));
     }
-    setProtocols((prev) => [newProto, ...prev]);
   };
 
-  const handleResetProtocol = (address: string) => {
-    setProtocols((prev) =>
-      prev.map((p) =>
-        p.address.toLowerCase() === address.toLowerCase()
-          ? {
-              ...p,
-              isHalted: false,
-              haltReason: '',
-              bountyPool: '15,000 GEN',
-            }
-          : p
-      )
-    );
+  const handleResetProtocol = async (address: string) => {
+    if (!requireLiveContract()) return;
+    try {
+      const client = getGenLayerClient(selectedNetwork);
+      await resetCircuitBreaker(client, contractAddress, address);
+      await refreshData();
+    } catch (e: any) {
+      alert('Circuit breaker reset failed: ' + (e?.shortMessage || e?.message || e));
+    }
   };
 
   const activeBreakers = protocols.filter((p) => p.isHalted).length;
@@ -327,6 +224,33 @@ export function App() {
                 Register Your Protocol
               </button>
             </div>
+            <div
+              className={`mt-6 inline-flex items-start gap-2 px-3 py-2 rounded-lg text-xs border ${
+                contractStatus === 'live'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                  : contractStatus === 'checking'
+                  ? 'bg-gray-800/60 border-gray-700 text-gray-300'
+                  : 'bg-red-500/10 border-red-500/30 text-red-300'
+              }`}
+            >
+              {contractStatus === 'live' ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+              ) : contractStatus === 'checking' ? (
+                <RefreshCw className="w-4 h-4 shrink-0 animate-spin" />
+              ) : (
+                <XCircle className="w-4 h-4 shrink-0" />
+              )}
+              <span>
+                {contractStatus === 'live' && <>Live: reading on-chain state from <code className="font-mono">{contractAddress}</code></>}
+                {contractStatus === 'checking' && <>Connecting to SentinEL contract...</>}
+                {contractStatus === 'missing' && (
+                  <>
+                    Contract not found on {NETWORKS[selectedNetwork].name}. Showing demo protocols only; reports are disabled
+                    until you deploy with <code className="font-mono">npm run deploy</code> or paste a live address.
+                  </>
+                )}
+              </span>
+            </div>
           </div>
         </section>
 
@@ -349,7 +273,9 @@ export function App() {
               </div>
               <h3 className="text-sm font-semibold text-gray-400">Total Bounty Escrow</h3>
             </div>
-            <p className="text-3xl font-black text-white font-mono">15,000 GEN</p>
+            <p className="text-3xl font-black text-white font-mono">
+              {formatGen(protocols.reduce((sum, p) => sum + BigInt(p.bountyPoolWei || '0'), 0n))}
+            </p>
           </div>
 
           <div className="bg-[#0f1422] border border-gray-800 p-5 rounded-2xl shadow-lg">
@@ -483,13 +409,18 @@ export function App() {
               </h2>
               <p className="text-xs text-gray-400">On-chain verdicts rendered by GenLayer AI-validators</p>
             </div>
-            <button onClick={refreshData} className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-800 transition">
+            <button onClick={() => refreshData()} className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-800 transition">
               <RefreshCw className="w-4 h-4" />
             </button>
           </div>
 
           <div className="bg-[#0f1422] border border-gray-800 rounded-2xl overflow-hidden shadow-xl">
             <div className="divide-y divide-gray-800/80">
+              {reports.length === 0 && (
+                <div className="p-6 text-center text-xs text-gray-400">
+                  {contractStatus === 'live' ? 'No reports submitted yet.' : 'Connect to a live SentinEL contract to see on-chain verdicts.'}
+                </div>
+              )}
               {reports.map((rep) => (
                 <div key={rep.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-gray-900/40 transition">
                   <div className="space-y-1.5 flex-1">
@@ -523,6 +454,10 @@ export function App() {
                       </a>
                       <span>•</span>
                       <span>Bounty Paid: <strong className="text-yellow-300 font-mono">{rep.bountyAwarded}</strong></span>
+                      <span>•</span>
+                      <span className={rep.stakeOutcome.startsWith('Stake slashed') ? 'text-red-300 font-mono' : 'font-mono'}>
+                        {rep.stakeOutcome}
+                      </span>
                     </div>
                   </div>
 
@@ -548,7 +483,7 @@ export function App() {
                 How GenLayer's Equivalence Principle Makes SentinEL Possible
               </h3>
               <p className="text-xs text-gray-300 leading-relaxed">
-                Traditional smart contracts cannot read external web block explorers (Tenderly, Etherscan) nor evaluate natural language security policies. SentinEL uses GenLayer's <strong className="text-white">GenVM Python environment</strong> to execute <code className="text-purple-300">gl.nondet.web.render()</code> for real-time trace retrieval and <code className="text-purple-300">gl.eq_principle.strict_eq()</code> across decentralized AI validators. Validators independently cross-examine the exploit trace and come to unmanipulable consensus on whether to trip the circuit breaker.
+                Traditional smart contracts cannot read external web block explorers (Tenderly, Etherscan) nor evaluate natural language security policies. SentinEL uses GenLayer's <strong className="text-white">GenVM Python environment</strong> to execute <code className="text-purple-300">gl.nondet.web.render()</code> for real-time trace retrieval and <code className="text-purple-300">gl.eq_principle.prompt_comparative()</code> across decentralized AI validators, who must agree on the HALT/REJECT decision even when their wording differs. Validators independently cross-examine the exploit trace and come to unmanipulable consensus on whether to trip the circuit breaker.
               </p>
             </div>
           </div>
@@ -559,6 +494,7 @@ export function App() {
         isOpen={isReportModalOpen}
         onClose={() => setIsReportModalOpen(false)}
         protocols={protocols}
+        initialTarget={reportTarget}
         onTriggerReport={handleTriggerReport}
       />
 
@@ -573,6 +509,7 @@ export function App() {
         onClose={() => setIsConsensusModalOpen(false)}
         isLoading={isDeliberating}
         result={deliberationResult}
+        error={deliberationError}
         targetProtocolName={activeTargetProtocol}
       />
     </div>

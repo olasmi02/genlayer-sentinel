@@ -47,7 +47,7 @@ sequenceDiagram
     activate SentinEL
     SentinEL->>Web: gl.nondet.web.render(proof_url)
     Web-->>SentinEL: Raw transaction trace & logs
-    SentinEL->>Validators: gl.eq_principle.strict_eq(evaluate_threat)
+    SentinEL->>Validators: gl.eq_principle.prompt_comparative(evaluate_threat, principle)
     Note over Validators: Leader proposes JSON verdict.<br/>Validators independently verify via LLM & Equivalence Principle.
     Validators-->>SentinEL: Consensus: { "action": "HALT", "confidence": 98% }
     SentinEL->>SentinEL: policy.is_halted = True
@@ -64,9 +64,9 @@ sequenceDiagram
 
 ## 🌐 Verified StudioNet Deployment
 
-* **Contract Address**: `0xc0547231791DE68E62d7fbcd222766BB86C800C8`
+* **Contract Address**: `0x40E132981AAB9B7a677770693eEA56546026c211`
 * **Deployment Tx**: `0x636933938db7e1c81a24d5b0b3396e05816bf60b774968e06806a62f4cec45ea`
-* **Studio Explorer**: [https://explorer-studio.genlayer.com/address/0xc0547231791DE68E62d7fbcd222766BB86C800C8](https://explorer-studio.genlayer.com/address/0xc0547231791DE68E62d7fbcd222766BB86C800C8)
+* **Studio Explorer**: [https://explorer-studio.genlayer.com/address/0x40E132981AAB9B7a677770693eEA56546026c211](https://explorer-studio.genlayer.com/address/0x40E132981AAB9B7a677770693eEA56546026c211)
 * **Consensus Status**: `ACCEPTED` (5/5 Validators Consensus: `MAJORITY_AGREE`)
 * **Live Web App**: [https://olasmi02.github.io/genlayer-sentinel/](https://olasmi02.github.io/genlayer-sentinel/)
 
@@ -149,13 +149,13 @@ class SentinEL(gl.Contract):
             }, sort_keys=True)
 
         # 3. Consensus reached via Equivalence Principle
-        verdict_str = gl.eq_principle.strict_eq(evaluate_threat)
+        verdict_str = gl.eq_principle.prompt_comparative(evaluate_threat, principle)
         verdict = json.loads(verdict_str)
 
         if verdict["action"] == "HALT":
             policy.is_halted = True
             # Disburse bounty to whitehat reporter
-            Address(reporter_addr).emit_transfer(value=policy.bounty_pool)
+            _Recipient(Address(reporter_addr)).emit_transfer(value=policy.bounty_pool + stake)
 
         return verdict["action"]
 ```

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cpu, CheckCircle2, AlertOctagon, X, Sparkles, Clock, ShieldCheck } from 'lucide-react';
+import { Cpu, CheckCircle2, AlertOctagon, X, Sparkles, Clock, ShieldCheck, XCircle } from 'lucide-react';
 import { ValidatorConsensusStep } from '../lib/types';
 
 interface ConsensusModalProps {
@@ -10,8 +10,14 @@ interface ConsensusModalProps {
     action: 'HALT' | 'REJECT';
     confidence: number;
     reasoning: string;
+    bountyAwarded: string;
+    stakeOutcome: string;
+    txHash: string;
+    status: string;
+    durationMs: number;
     steps: ValidatorConsensusStep[];
   } | null;
+  error?: string;
   targetProtocolName: string;
 }
 
@@ -20,6 +26,7 @@ export const ConsensusModal: React.FC<ConsensusModalProps> = ({
   onClose,
   isLoading,
   result,
+  error,
   targetProtocolName,
 }) => {
   if (!isOpen) return null;
@@ -66,6 +73,24 @@ export const ConsensusModal: React.FC<ConsensusModalProps> = ({
               Leader fetching transaction receipt via <code className="text-purple-300">gl.nondet.web.render()</code> and proposing verdict. Independent validators validating output with LLMs.
             </p>
           </div>
+        ) : error ? (
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl border bg-red-500/10 border-red-500/30 flex items-start gap-3">
+              <XCircle className="w-6 h-6 text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-bold text-red-300 mb-1">Transaction failed: no verdict recorded</h4>
+                <p className="text-xs text-gray-300 font-mono break-all">{error}</p>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-white text-xs font-semibold transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         ) : result ? (
           <div className="space-y-6">
             {/* Final Verdict Banner */}
@@ -91,12 +116,18 @@ export const ConsensusModal: React.FC<ConsensusModalProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-gray-300 leading-relaxed font-mono">{result.reasoning}</p>
-                {result.action === 'HALT' && (
-                  <div className="mt-3 pt-3 border-t border-red-500/20 flex items-center justify-between text-xs">
-                    <span className="text-white font-medium">Automated Action: Target Vault Frozen</span>
-                    <span className="text-yellow-300 font-bold">Whitehat Bounty Disbursed 💰</span>
-                  </div>
-                )}
+                <div
+                  className={`mt-3 pt-3 border-t flex flex-wrap items-center justify-between gap-2 text-xs ${
+                    result.action === 'HALT' ? 'border-red-500/20' : 'border-emerald-500/20'
+                  }`}
+                >
+                  <span className="text-white font-medium">
+                    {result.action === 'HALT' ? 'Automated Action: Target Vault Frozen' : 'Protocol remains operational'}
+                  </span>
+                  <span className="text-yellow-300 font-bold font-mono">
+                    Bounty: {result.bountyAwarded} · {result.stakeOutcome}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -112,27 +143,27 @@ export const ConsensusModal: React.FC<ConsensusModalProps> = ({
                     className="flex items-center justify-between p-3 rounded-lg bg-gray-900/80 border border-gray-800 text-xs"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <div
+                        className={`w-2 h-2 rounded-full ${
+                          v.vote === 'LEADER' || v.vote === 'AGREE' ? 'bg-emerald-400' : 'bg-red-400'
+                        }`}
+                      />
                       <div>
                         <div className="font-semibold text-white">{v.validatorId}</div>
                         <div className="text-[11px] text-gray-400 font-mono">{v.model}</div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <span className="text-gray-400 flex items-center gap-1 font-mono">
-                        <Clock className="w-3 h-3" />
-                        {v.latencyMs}ms
-                      </span>
-                      <span
-                        className={`px-2.5 py-1 rounded font-bold font-mono ${
-                          v.decision === 'HALT'
-                            ? 'bg-red-500/20 text-red-300 border border-red-500/30'
-                            : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        }`}
-                      >
-                        {v.decision} ({v.confidence}%)
-                      </span>
-                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded font-bold font-mono ${
+                        v.vote === 'LEADER'
+                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                          : v.vote === 'AGREE'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : 'bg-red-500/20 text-red-300 border border-red-500/30'
+                      }`}
+                    >
+                      {v.vote === 'LEADER' ? `PROPOSED ${result.action}` : v.vote}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -140,9 +171,13 @@ export const ConsensusModal: React.FC<ConsensusModalProps> = ({
 
             {/* Footer */}
             <div className="flex items-center justify-between pt-2 border-t border-gray-800">
-              <span className="text-[11px] text-gray-400 flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-purple-400" />
-                Verified on GenLayer GenVM (Optimistic Democracy Consensus)
+              <span className="text-[11px] text-gray-400 flex items-center gap-1.5 min-w-0">
+                <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" />
+                <span className="truncate">
+                  {result.status} · <code className="font-mono">{result.txHash.slice(0, 10)}...{result.txHash.slice(-6)}</code>
+                </span>
+                <Clock className="w-3 h-3 shrink-0" />
+                {(result.durationMs / 1000).toFixed(1)}s
               </span>
               <button
                 onClick={onClose}

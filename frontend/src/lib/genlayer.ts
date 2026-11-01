@@ -1,5 +1,6 @@
 import { createClient, chains, createAccount } from 'genlayer-js';
-import { Protocol, ExploitReport } from './types';
+import { Protocol, ExploitReport, ValidatorConsensusStep } from './types';
+import deployment from './deployment.json';
 
 export const NETWORKS = {
   studionext: {
@@ -25,8 +26,12 @@ export const NETWORKS = {
   }
 };
 
+// Written by scripts/deploy.mjs after each deployment
+export const DEFAULT_CONTRACT_ADDRESS: string = deployment.address;
+
 const DEMO_PK = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const account = createAccount(DEMO_PK);
+export const DEMO_ACCOUNT_ADDRESS = account.address;
 
 export function getGenLayerClient(networkKey: keyof typeof NETWORKS) {
   const net = NETWORKS[networkKey];
@@ -37,6 +42,25 @@ export function getGenLayerClient(networkKey: keyof typeof NETWORKS) {
   });
 }
 
+const WEI_PER_GEN = 10n ** 18n;
+
+export function formatGen(wei: string | bigint | number | undefined): string {
+  if (wei === undefined || wei === null || wei === '') return '0 GEN';
+  const value = BigInt(wei);
+  const whole = value / WEI_PER_GEN;
+  const frac = value % WEI_PER_GEN;
+  const fracStr = frac === 0n ? '' : '.' + frac.toString().padStart(18, '0').slice(0, 4).replace(/0+$/, '');
+  return `${whole.toLocaleString('en-US')}${fracStr} GEN`;
+}
+
+export function parseGen(text: string): bigint {
+  const cleaned = text.replace(/[^0-9.]/g, '');
+  if (!cleaned) return 0n;
+  const [whole, frac = ''] = cleaned.split('.');
+  return BigInt(whole || '0') * WEI_PER_GEN + BigInt((frac + '0'.repeat(18)).slice(0, 18));
+}
+
+// Display-only metadata for the demo protocols seeded by scripts/deploy.mjs
 export const INITIAL_PROTOCOLS: Protocol[] = [
   {
     name: 'ApexYield Lending',
@@ -44,10 +68,11 @@ export const INITIAL_PROTOCOLS: Protocol[] = [
     category: 'Money Market',
     rules: 'Max borrow limit 1M USD equivalent. Flashloans must be repaid within same block. Any reentrancy pattern or uncollateralized borrow is an exploit.',
     bountyPool: '15,000 GEN',
+    bountyPoolWei: (15_000n * WEI_PER_GEN).toString(),
     tvl: '$4.2M',
     isHalted: false,
     haltReason: '',
-    reportsCount: 1,
+    reportsCount: 0,
   },
   {
     name: 'Orbit DEX V3',
@@ -55,6 +80,7 @@ export const INITIAL_PROTOCOLS: Protocol[] = [
     category: 'Concentrated Liquidity',
     rules: 'Slippage tolerance capped at 2.5% per pool tick. Flash-swaps must maintain constant product invariant k. Price manipulation is prohibited.',
     bountyPool: '25,000 GEN',
+    bountyPoolWei: (25_000n * WEI_PER_GEN).toString(),
     tvl: '$12.8M',
     isHalted: false,
     haltReason: '',
@@ -66,128 +92,140 @@ export const INITIAL_PROTOCOLS: Protocol[] = [
     category: 'Cross-Chain Bridge',
     rules: 'Validator signature threshold 3-of-5 required. Single transaction withdrawal cap: 100 ETH equivalent. Unauthorized mint is an exploit.',
     bountyPool: '50,000 GEN',
+    bountyPoolWei: (50_000n * WEI_PER_GEN).toString(),
     tvl: '$8.5M',
     isHalted: false,
     haltReason: '',
-    reportsCount: 2,
+    reportsCount: 0,
   },
 ];
 
-export const INITIAL_REPORTS: ExploitReport[] = [
-  {
-    id: 101,
-    reporter: '0x9a8f...31b2 (Whitehat Agent)',
-    targetAddress: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
-    targetName: 'ApexYield Lending',
-    proofUrl: 'https://etherscan.io/tx/0x918f4a12c8b7d90e21a3',
-    exploitType: 'Slippage Spike / Arbitrage',
-    action: 'REJECT',
-    isExploit: false,
-    confidence: 96,
-    reasoning: 'Normal market arbitrage: price impact was 1.8%, below the 2.5% exploit threshold. Full swap fees collected.',
-    bountyAwarded: '0 GEN',
-    timestamp: '2 hours ago',
-  },
-  {
-    id: 100,
-    reporter: '0x43bc...e891 (Immunefi Bot)',
-    targetAddress: '0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc',
-    targetName: 'LiquidStake Bridge',
-    proofUrl: 'https://tenderly.co/tx/0x3c78a0f918e',
-    exploitType: 'Replay Signature Attack',
-    action: 'REJECT',
-    isExploit: false,
-    confidence: 91,
-    reasoning: 'Non-reproducible transaction. Nonce check successfully caught the duplicate signature off-chain.',
-    bountyAwarded: '0 GEN',
-    timestamp: '1 day ago',
-  },
-];
+const EVIDENCE_BASE = 'https://raw.githubusercontent.com/olasmi02/genlayer-sentinel/main/evidence';
 
 export const SAMPLE_EXPLOITS = [
   {
     title: 'Flashloan Reentrancy Attack on ApexYield',
     targetAddress: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
     exploitType: 'Reentrancy Drain',
-    proofUrl: 'https://raw.githubusercontent.com/yearn/yearn-security/master/disclosures/2021-02-04.md',
-    simulatedTrace: 'Flashloan 4,000,000 USDC from Aave -> Call deposit() -> Call emergencyWithdraw() recursively in fallback -> Drained 2,400,000 USDC reserve without collateral check.',
+    proofUrl: `${EVIDENCE_BASE}/apexyield-reentrancy-incident.md`,
     expectedVerdict: 'HALT' as const,
-    reasoning: 'Confirmed critical reentrancy exploit: recursive call trace bypassed health factor checks and drained $2.4M reserve.',
   },
   {
     title: 'Flash-Swap Arbitrage on Orbit DEX (Benign)',
     targetAddress: '0x1c8b7454c5e53e4b2d184cf4f84c59a35e76a6b1',
     exploitType: 'Price Manipulation Claim',
-    proofUrl: 'https://etherscan.io/tx/0xa1b2c3d4e5f67890',
-    simulatedTrace: 'Trader swapped 150 ETH for USDC across 3 pools, incurring 0.8% slippage. Pool reserves balanced with standard Uniswap k-curve formula.',
+    proofUrl: `${EVIDENCE_BASE}/orbit-dex-arbitrage-trace.md`,
     expectedVerdict: 'REJECT' as const,
-    reasoning: 'Legitimate multi-hop swap within registered 2.5% slippage tolerance. No price oracle manipulation detected.',
   },
   {
-    title: 'Fake Multi-sig Signature Injection on LiquidStake',
+    title: 'Forged Multi-sig Mint on LiquidStake',
     targetAddress: '0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc',
     exploitType: 'Bridge Mint Exploit',
-    proofUrl: 'https://blockscout.com/tx/0x77665544332211',
-    simulatedTrace: 'Call releaseTokens() with forged ECDSA values passing through ecrecover zero address bug -> Minted 500,000 LST without validator quorum.',
+    proofUrl: `${EVIDENCE_BASE}/liquidstake-forged-mint.md`,
     expectedVerdict: 'HALT' as const,
-    reasoning: 'Critical signature bypass verified: zero-address check was skipped, allowing unauthorized minting without 3-of-5 validator threshold.',
-  }
+  },
+  {
+    title: 'Nonexistent Etherscan Tx (No Evidence)',
+    targetAddress: '0x1c8b7454c5e53e4b2d184cf4f84c59a35e76a6b1',
+    exploitType: 'Price Manipulation Claim',
+    proofUrl: 'https://etherscan.io/tx/0xa1b2c3d4e5f67890',
+    expectedVerdict: 'REJECT' as const,
+  },
+  {
+    title: 'Spoofed Alert Site (Stake Slashed)',
+    targetAddress: '0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc',
+    exploitType: 'Bridge Mint Exploit',
+    proofUrl: 'https://liquidstake-security-alerts.xyz/exploit-drained',
+    expectedVerdict: 'REJECT' as const,
+  },
 ];
 
+// genlayer-js returns contract dicts as Map instances; normalise to plain objects
+function toPlain(value: any): any {
+  if (value instanceof Map) return Object.fromEntries([...value].map(([k, v]) => [k, toPlain(v)]));
+  if (Array.isArray(value)) return value.map(toPlain);
+  if (typeof value === 'bigint') return value.toString();
+  return value;
+}
+
+async function readView(client: any, contractAddress: string, functionName: string, args: any[] = []) {
+  return toPlain(await client.readContract({ address: contractAddress, functionName, args }));
+}
+
+/** Throws if the contract is not deployed at this address on the selected network. */
 export async function fetchProtocols(client: any, contractAddress: string): Promise<Protocol[]> {
-  try {
-    const data = await client.readContract({
-      address: contractAddress,
-      functionName: 'get_all_protocols',
-      args: []
-    });
-    
-    if (!data || data.length === 0) return [];
-    
-    return data.map((p: any) => ({
+  const data: any[] = (await readView(client, contractAddress, 'get_all_protocols')) || [];
+  return data.map((p) => {
+    const meta = INITIAL_PROTOCOLS.find((m) => m.address.toLowerCase() === p.target_address);
+    return {
       name: p.protocol_name,
       address: p.target_address,
-      category: 'Registered Protocol',
+      category: meta?.category || 'Registered Protocol',
       rules: p.rules,
-      bountyPool: p.bounty_pool ? p.bounty_pool.toString() + ' GEN' : '0 GEN',
-      tvl: '$4.2M',
+      bountyPool: formatGen(p.bounty_pool),
+      bountyPoolWei: String(p.bounty_pool ?? '0'),
+      tvl: meta?.tvl || '—',
       isHalted: Boolean(p.is_halted),
       haltReason: p.halt_reason || '',
       reportsCount: Number(p.reports_count)
-    }));
-  } catch (err) {
-    console.warn('Live fetch returned empty/error:', err);
-    return [];
-  }
+    };
+  });
 }
 
-export async function fetchReports(client: any, contractAddress: string): Promise<ExploitReport[]> {
-  try {
-    const data = await client.readContract({
-      address: contractAddress,
-      functionName: 'get_all_reports',
-      args: []
-    });
-    
-    if (!data || data.length === 0) return [];
-    
-    return data.map((r: any) => ({
+export function describeStake(r: { action: string; stake: string; stake_slashed: boolean }): string {
+  if (BigInt(r.stake || '0') === 0n) return 'No stake';
+  if (r.stake_slashed) return `Stake slashed: -${formatGen(r.stake)}`;
+  return `Stake refunded: ${formatGen(r.stake)}`;
+}
+
+/** Returns reports newest first. Throws if the contract is unreachable. */
+export async function fetchReports(client: any, contractAddress: string, protocols: Protocol[] = []): Promise<ExploitReport[]> {
+  const data: any[] = (await readView(client, contractAddress, 'get_all_reports')) || [];
+  return data
+    .map((r) => ({
       id: Number(r.id),
       reporter: r.reporter,
       targetAddress: r.target_address,
-      targetName: r.target_address,
+      targetName: protocols.find((p) => p.address.toLowerCase() === r.target_address)?.name || r.target_address,
       proofUrl: r.proof_url,
       exploitType: r.exploit_type,
       action: r.action,
-      isExploit: r.is_exploit,
+      isExploit: Boolean(r.is_exploit),
       confidence: Number(r.confidence),
       reasoning: r.reasoning,
-      bountyAwarded: r.bounty_awarded ? r.bounty_awarded.toString() + ' GEN' : '0 GEN',
-      timestamp: 'Recently'
-    }));
-  } catch (err) {
-    return [];
+      bountyAwarded: formatGen(r.bounty_awarded),
+      stakeOutcome: describeStake(r),
+      timestamp: `Report #${Number(r.id)}`
+    }))
+    .sort((a, b) => b.id - a.id);
+}
+
+export async function fetchReportStake(client: any, contractAddress: string): Promise<bigint> {
+  return BigInt(await readView(client, contractAddress, 'get_report_stake'));
+}
+
+/**
+ * Sends a write transaction, waits for consensus and throws with the contract's error message
+ * if execution failed (e.g. "Protocol not registered").
+ */
+async function writeAndWait(client: any, contractAddress: string, functionName: string, args: any[], value: bigint) {
+  const startTime = Date.now();
+  const txHash = await client.writeContract({ address: contractAddress, functionName, args, value });
+  const tx = await client.waitForTransactionReceipt({
+    hash: txHash,
+    status: 'ACCEPTED',
+    fullTransaction: true,
+    retries: 120,
+    interval: 3000
+  });
+  const consensus = tx?.consensus_data || {};
+  const leaderReceipt = consensus.leader_receipt?.[0] || {};
+  if (leaderReceipt.execution_result && leaderReceipt.execution_result !== 'SUCCESS') {
+    const stderr: string = leaderReceipt.genvm_result?.stderr || '';
+    const userError = stderr.match(/UserError:\s*(.*)/)?.[1] || leaderReceipt.result?.payload?.readable || '';
+    throw new Error(`Contract rejected ${functionName}${userError ? ': ' + userError : ''}`);
   }
+  return { txHash, tx, consensus, leaderReceipt, durationMs: Date.now() - startTime };
 }
 
 export async function registerProtocol(
@@ -195,15 +233,15 @@ export async function registerProtocol(
   contractAddress: string,
   targetAddress: string,
   protocolName: string,
-  rules: string
+  rules: string,
+  bountyWei: bigint = 0n
 ): Promise<string> {
-  const txHash = await client.writeContract({
-    address: contractAddress,
-    functionName: 'register_protocol',
-    args: [targetAddress, protocolName, rules],
-    value: 0n
-  });
-  await client.waitForTransactionReceipt({ hash: txHash });
+  const { txHash } = await writeAndWait(client, contractAddress, 'register_protocol', [targetAddress, protocolName, rules], bountyWei);
+  return txHash;
+}
+
+export async function resetCircuitBreaker(client: any, contractAddress: string, targetAddress: string): Promise<string> {
+  const { txHash } = await writeAndWait(client, contractAddress, 'reset_circuit_breaker', [targetAddress], 0n);
   return txHash;
 }
 
@@ -216,49 +254,38 @@ export async function submitExploitReport(
 ): Promise<{
   txHash: string;
   status: string;
-  validators: string[];
-  votes: string[];
-  leader: string;
-  resultName: string;
+  steps: ValidatorConsensusStep[];
   durationMs: number;
 }> {
-  const startTime = Date.now();
-  let txHash = '';
-  try {
-    txHash = await client.writeContract({
-      address: contractAddress,
-      functionName: 'report_exploit',
-      args: [targetAddress, proofUrl, exploitType],
-      value: 0n
-    });
-  } catch (err: any) {
-    // If standard writeContract errors on estimation, use client sendTransaction fallback
-    const sender = client.account?.address || '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
-    txHash = await client.sendTransaction({
-      from: sender,
-      to: contractAddress,
-      data: '0x',
-      value: 0n
-    });
-  }
+  const stake = await fetchReportStake(client, contractAddress);
+  const { txHash, tx, consensus, leaderReceipt, durationMs } = await writeAndWait(
+    client, contractAddress, 'report_exploit', [targetAddress, proofUrl, exploitType], stake
+  );
 
-  const receipt = await client.waitForTransactionReceipt({ hash: txHash }).catch(() => null);
-  const tx = await client.getTransaction({ hash: txHash }).catch(() => null);
-  const durationMs = Date.now() - startTime;
-
-  const validators: string[] = tx?.last_round?.round_validators || [];
-  const votes: string[] = tx?.last_round?.validator_votes_name || [];
-  const leader: string = tx?.last_leader || (validators.length > 0 ? validators[0] : '');
-  const resultName: string = tx?.result_name || 'MAJORITY_AGREE';
-  const status: string = tx?.statusName || (receipt?.status === 1 || receipt?.status === 5 ? 'FINALIZED' : 'SUCCESS');
+  const leaderConfig = leaderReceipt.node_config || {};
+  const steps: ValidatorConsensusStep[] = [
+    {
+      validatorId: `${shortAddr(leaderConfig.address)} (Leader Node)`,
+      model: [leaderConfig.provider, leaderConfig.model].filter(Boolean).join(' / ') || 'Lead Consensus Evaluator',
+      vote: 'LEADER'
+    },
+    // Validators that sat out the round report "idle"; only show the ones that actually voted
+    ...(consensus.validators || []).filter((v: any) => String(v.vote).toLowerCase() !== 'idle').map((v: any) => ({
+      validatorId: shortAddr(v.node_config?.address),
+      model: [v.node_config?.provider, v.node_config?.model].filter(Boolean).join(' / ') || 'Equivalence Validator',
+      vote: String(v.vote || v.execution_result || 'UNKNOWN').toUpperCase()
+    }))
+  ];
 
   return {
     txHash,
-    status,
-    validators,
-    votes,
-    leader,
-    resultName,
+    status: tx?.statusName || String(tx?.status ?? 'ACCEPTED'),
+    steps,
     durationMs
   };
+}
+
+function shortAddr(addr?: string): string {
+  if (!addr) return 'Validator';
+  return `${addr.slice(0, 8)}...${addr.slice(-6)}`;
 }

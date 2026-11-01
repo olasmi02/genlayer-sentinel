@@ -4,6 +4,7 @@ export interface Protocol {
   category: string;
   rules: string;
   bountyPool: string;
+  bountyPoolWei: string;
   tvl: string;
   isHalted: boolean;
   haltReason: string;
@@ -22,13 +23,12 @@ export interface ExploitReport {
   confidence: number;
   reasoning: string;
   bountyAwarded: string;
+  stakeOutcome: string;
   timestamp: string;
 }
 
 export interface ValidatorConsensusStep {
   validatorId: string;
   model: string;
-  decision: "HALT" | "REJECT";
-  confidence: number;
-  latencyMs: number;
+  vote: string;   // "LEADER", or the validator's vote on the leader's verdict (e.g. "AGREE")
 }
