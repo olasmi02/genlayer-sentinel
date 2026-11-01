@@ -38,6 +38,7 @@ import {
   metamaskDeepLink,
   fetchProtocols,
   fetchReports,
+  fetchReportStake,
   formatGen,
   parseGen,
   registerProtocol,
@@ -166,10 +167,23 @@ export function App() {
   const handleRequestTestGen = async () => {
     if (!walletAddress) return;
     setIsFunding(true);
+    const net = NETWORKS[selectedNetwork];
+    const who = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
     try {
+      const before = await fetchBalance(selectedNetwork, walletAddress);
       await requestTestGen(selectedNetwork, walletAddress);
-      await refreshBalance(walletAddress);
-      setNotice({ text: `Added 1,000 test GEN to ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)} on ${NETWORKS[selectedNetwork].shortName}.` });
+      // Confirm the funds actually landed instead of trusting the faucet's response
+      let after = before;
+      for (let i = 0; i < 6 && after <= before; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        after = await fetchBalance(selectedNetwork, walletAddress);
+      }
+      setWalletBalance(after);
+      setNotice(
+        after > before
+          ? { text: `Added ${formatGen(after - before)} to ${who}. Balance on ${net.shortName} (chain ${net.chainId}) is now ${formatGen(after)}. If your wallet shows a different amount, make sure it is on ${net.chainConfig.name} (chain ${net.chainId}).` }
+          : { text: `The faucet accepted the request but ${who}'s balance on ${net.shortName} did not change (still ${formatGen(after)}). Please try again in a minute.` }
+      );
     } catch (e: any) {
       setNotice({ text: 'Faucet request failed: ' + errorText(e) });
     } finally {
@@ -206,6 +220,21 @@ export function App() {
     return getGenLayerClient(selectedNetwork, address);
   };
 
+  /** Checks the wallet can cover `needed` on this network before the wallet is asked to sign. */
+  const hasFunds = async (needed: bigint, purpose: string) => {
+    if (needed === 0n || !walletAddress) return true;
+    const balance = await fetchBalance(selectedNetwork, walletAddress).catch(() => null);
+    if (balance === null) return true; // can't tell; let the wallet decide
+    setWalletBalance(balance);
+    if (balance >= needed) return true;
+    const net = NETWORKS[selectedNetwork];
+    setNotice({
+      text: `${purpose} needs ${formatGen(needed)}, but this wallet has ${formatGen(balance)} on ${net.shortName} (chain ${net.chainId}). ` +
+        `Tap "Get test GEN" to add 1,000 test GEN, then try again.`
+    });
+    return false;
+  };
+
   const handleOpenReportForProtocol = (addr: string) => {
     setReportTarget(addr);
     setIsReportModalOpen(true);
@@ -214,6 +243,8 @@ export function App() {
   const handleTriggerReport = async (targetAddress: string, proofUrl: string, exploitType: string) => {
     const client = await requireWalletClient();
     if (!client) return;
+    const stake = await fetchReportStake(client, contractAddress).catch(() => 0n);
+    if (!(await hasFunds(stake, 'The anti-griefing stake'))) return;
     const targetProto = protocols.find((p) => p.address.toLowerCase() === targetAddress.toLowerCase());
     setActiveTargetProtocol(targetProto?.name || targetAddress);
     setIsConsensusModalOpen(true);
@@ -258,8 +289,10 @@ export function App() {
   const handleRegisterProtocol = async (newProto: Protocol) => {
     const client = await requireWalletClient();
     if (!client) return;
+    const bounty = parseGen(newProto.bountyPool);
+    if (!(await hasFunds(bounty, 'The bounty deposit'))) return;
     try {
-      await registerProtocol(client, contractAddress, newProto.address, newProto.name, newProto.rules, parseGen(newProto.bountyPool));
+      await registerProtocol(client, contractAddress, newProto.address, newProto.name, newProto.rules, bounty);
       await refreshData();
       refreshBalance();
     } catch (e: any) {

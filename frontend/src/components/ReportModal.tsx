@@ -144,6 +144,11 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             </div>
           </div>
 
+          <p className="text-[10px] text-gray-500 leading-relaxed">
+            Your wallet signs the stake. On GenLayer Studio networks MetaMask may say it can't simulate or estimate this
+            transaction; that is expected, because Studio's RPC doesn't support wallet previews. Gas is free.
+          </p>
+
           <div className="pt-2 flex items-center justify-end gap-3">
             <button
               type="button"
