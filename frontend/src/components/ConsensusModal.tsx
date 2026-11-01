@@ -32,8 +32,8 @@ export const ConsensusModal: React.FC<ConsensusModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-[#0f1422] border border-gray-800 rounded-2xl w-full max-w-2xl p-6 shadow-2xl relative overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 overflow-y-auto bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-[#0f1422] border border-gray-800 rounded-2xl w-full max-w-2xl p-4 sm:p-6 my-2 sm:my-0 shadow-2xl relative overflow-hidden">
         {/* Glow effect */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-32 bg-purple-600/15 blur-3xl pointer-events-none" />
 
@@ -51,7 +51,7 @@ export const ConsensusModal: React.FC<ConsensusModalProps> = ({
             <Cpu className="w-5 h-5 text-purple-400" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+            <h3 className="text-base sm:text-lg font-bold text-white flex flex-wrap items-center gap-x-2 gap-y-1 pr-8">
               GenLayer AI Consensus Deliberation
               <span className="text-xs px-2 py-0.5 rounded bg-purple-900/50 text-purple-300 font-mono">
                 Equivalence Principle
@@ -107,7 +107,7 @@ export const ConsensusModal: React.FC<ConsensusModalProps> = ({
                 <CheckCircle2 className="w-7 h-7 text-emerald-400 shrink-0 mt-0.5" />
               )}
               <div className="flex-1">
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                   <h4 className="text-sm font-bold uppercase tracking-wider">
                     {result.action === 'HALT' ? '🚨 Circuit Breaker Tripped: HALT TARGET' : '✅ Incident Dismissed: REJECT (False Positive)'}
                   </h4>
@@ -140,7 +140,7 @@ export const ConsensusModal: React.FC<ConsensusModalProps> = ({
                 {result.steps.map((v, i) => (
                   <div
                     key={i}
-                    className="flex items-center justify-between p-3 rounded-lg bg-gray-900/80 border border-gray-800 text-xs"
+                    className="flex items-center justify-between gap-2 p-3 rounded-lg bg-gray-900/80 border border-gray-800 text-xs"
                   >
                     <div className="flex items-center gap-3">
                       <div
@@ -170,7 +170,7 @@ export const ConsensusModal: React.FC<ConsensusModalProps> = ({
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-between pt-2 border-t border-gray-800">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-800">
               <span className="text-[11px] text-gray-400 flex items-center gap-1.5 min-w-0">
                 <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" />
                 <span className="truncate">

@@ -1,12 +1,13 @@
-// Deploys contracts/sentinel.py to GenLayer StudioNet, seeds the demo protocols, and writes the
-// new address to frontend/src/lib/deployment.json so the web app picks it up.
+// Deploys contracts/sentinel.py to a GenLayer Studio network, seeds the demo protocols, and writes the
+// new address to frontend/src/lib/deployment.json (keyed by network) so the web app picks it up.
 //
 // Usage (from the repo root):  npm run deploy
 // Env vars:
+//   NETWORK            studionet (default, chain 61999) or studionext (chain 61997)
 //   PRIVATE_KEY        deployer key (defaults to the public demo key the frontend uses)
 //   REPORT_STAKE_GEN   anti-griefing stake per report, in GEN (default 500)
 //   SEED_BOUNTIES      "0" to register the demo protocols without bounty deposits
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createClient, createAccount, chains } from '../frontend/node_modules/genlayer-js/dist/index.js';
@@ -15,8 +16,17 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DEMO_PK = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const WEI_PER_GEN = 10n ** 18n;
 
+const NETWORKS = {
+  studionet: { id: 61999, name: 'GenLayer StudioNet', rpc: 'https://studio.genlayer.com/api', explorer: 'https://explorer-studio.genlayer.com' },
+  studionext: { id: 61997, name: 'GenLayer Studio Next', rpc: 'https://studio-dev.genlayer.com/api', explorer: 'https://explorer-studio-dev.genlayer.com' },
+};
+const networkKey = process.env.NETWORK || 'studionet';
+const net = NETWORKS[networkKey];
+if (!net) throw new Error(`Unknown NETWORK "${networkKey}" (use ${Object.keys(NETWORKS).join(' or ')})`);
+const chain = { ...chains.studionet, id: net.id, name: net.name, rpcUrls: { default: { http: [net.rpc] } } };
+
 const account = createAccount(process.env.PRIVATE_KEY || DEMO_PK);
-const client = createClient({ chain: chains.studionet, account });
+const client = createClient({ chain, account });
 const reportStake = BigInt(process.env.REPORT_STAKE_GEN ?? '500') * WEI_PER_GEN;
 const seedBounties = process.env.SEED_BOUNTIES !== '0';
 
@@ -51,15 +61,22 @@ async function waitOk(hash, label) {
 }
 
 async function tryFund(amount) {
-  // Studio exposes sim_fundAccount; harmless if unsupported
+  // Studio exposes sim_fundAccount (amount in wei, too large for a JSON number from JSON.stringify)
   try {
-    await client.request({ method: 'sim_fundAccount', params: [account.address, Number(amount / WEI_PER_GEN)] });
+    const res = await fetch(net.rpc, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: `{"jsonrpc":"2.0","id":1,"method":"sim_fundAccount","params":["${account.address}",${amount}]}`,
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
     console.log(`Requested ${amount / WEI_PER_GEN} GEN from the Studio faucet for ${account.address}`);
   } catch (e) {
-    console.log(`Studio faucet unavailable (${e.shortMessage || e.message}); continuing with existing balance.`);
+    console.log(`Studio faucet unavailable (${e.message}); continuing with existing balance.`);
   }
 }
 
+console.log(`Network: ${net.name} (${net.id})`);
 console.log(`Deployer: ${account.address}`);
 if (seedBounties) {
   const total = DEMO_PROTOCOLS.reduce((s, p) => s + p.bountyGen * WEI_PER_GEN, 0n) + 10n * reportStake;
@@ -90,9 +107,8 @@ for (const p of DEMO_PROTOCOLS) {
 }
 
 const deploymentPath = join(root, 'frontend', 'src', 'lib', 'deployment.json');
-writeFileSync(
-  deploymentPath,
-  JSON.stringify({ address: contractAddress, network: 'studionet', deployedAt: new Date().toISOString() }, null, 2) + '\n'
-);
+const deployments = existsSync(deploymentPath) ? JSON.parse(readFileSync(deploymentPath, 'utf-8')) : {};
+deployments[networkKey] = { address: contractAddress, deployedAt: new Date().toISOString() };
+writeFileSync(deploymentPath, JSON.stringify(deployments, null, 2) + '\n');
 console.log(`Wrote ${deploymentPath}`);
-console.log(`Explorer: https://explorer-studio.genlayer.com/address/${contractAddress}`);
+console.log(`Explorer: ${net.explorer}/address/${contractAddress}`);

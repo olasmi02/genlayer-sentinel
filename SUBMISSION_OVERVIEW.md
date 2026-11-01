@@ -53,7 +53,10 @@ SentinEL/
 ### 3. Frontend Integration (`frontend/`)
 * Built with Vite, React 19, TypeScript, and `@tailwindcss/vite`.
 * Integrated with the official `genlayer-js` SDK (`createClient`, `readContract`, `writeContract`).
-* Features live network switcher with **Studio Next (61997)** and **StudioNet (61999)**.
+* Users connect their own wallet (MetaMask or any EIP-1193 wallet); the app adds/switches to the GenLayer network and signs reports, stakes and registrations from that wallet. No keys ship in the frontend.
+* Built-in Studio faucet ("Get test GEN") so anyone can fund a wallet for the 500 GEN report stake.
+* Network switcher for **StudioNet (61999)**, where the contract is deployed, and **Studio Next (61997)**.
+* Responsive layout for phones, tablets and desktop.
 * Includes real-time HTTP evidence fetching and displays live on-chain validator consensus details.
 
 ---
@@ -73,10 +76,10 @@ If you ever want to run or test the frontend on your computer:
 
 ## 🎬 2-Minute Demo Video Script (For Hackathon Submission)
 
-1. **Scene 1 (0:00 - 0:30) — Problem & Studio Next (61997) Connection:**
+1. **Scene 1 (0:00 - 0:30) — Problem & Live Contract Connection:**
    * Open the live site: `https://olasmi02.github.io/genlayer-sentinel/`
-   * Point out the **Studio Next (61997)** network selected in the top bar and the **Live Contract connection**.
-   * State: *"Traditional smart contracts are blind to external hacks. SentinEL connects real-world web evidence to on-chain execution using GenLayer Intelligent Contracts on Studio Next."*
+   * Point out **StudioNet (61999)** selected in the top bar, the **Live Contract connection**, and connect your wallet.
+   * State: *"Traditional smart contracts are blind to external hacks. SentinEL connects real-world web evidence to on-chain execution using GenLayer Intelligent Contracts on GenLayer Studio."*
 
 2. **Scene 2 (0:30 - 1:00) — Python Intelligent Contract:**
    * Briefly show `contracts/sentinel.py` on screen.

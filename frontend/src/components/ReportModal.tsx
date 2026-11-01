@@ -46,8 +46,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-      <div className="bg-[#0f1422] border border-gray-800 rounded-2xl w-full max-w-xl p-6 shadow-2xl relative">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 overflow-y-auto bg-black/80 backdrop-blur-sm">
+      <div className="bg-[#0f1422] border border-gray-800 rounded-2xl w-full max-w-xl p-4 sm:p-6 my-2 sm:my-0 shadow-2xl relative">
         <button
           onClick={onClose}
           className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition"
@@ -77,11 +77,11 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                 key={idx}
                 type="button"
                 onClick={() => handleSelectPreset(sample)}
-                className="w-full text-left p-2 rounded-lg bg-gray-900/60 hover:bg-purple-900/40 border border-gray-800/80 hover:border-purple-500/40 transition flex items-center justify-between text-xs"
+                className="w-full text-left p-2 rounded-lg bg-gray-900/60 hover:bg-purple-900/40 border border-gray-800/80 hover:border-purple-500/40 transition flex items-center justify-between gap-2 text-xs"
               >
-                <span className="font-semibold text-gray-200">{sample.title}</span>
+                <span className="font-semibold text-gray-200 min-w-0">{sample.title}</span>
                 <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                  className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded ${
                     sample.expectedVerdict === 'HALT'
                       ? 'bg-red-500/20 text-red-300'
                       : 'bg-emerald-500/20 text-emerald-300'
@@ -124,7 +124,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-gray-400 font-semibold mb-1 flex items-center justify-between">
+            <label className="text-gray-400 font-semibold mb-1 flex flex-wrap items-center justify-between gap-x-2">
               <span>Proof / Transaction Trace URL (Fetched by GenVM)</span>
               <span className="text-[10px] text-purple-400 flex items-center gap-1">
                 <Globe className="w-3 h-3" /> gl.nondet.web.render()
@@ -138,7 +138,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-purple-500 font-mono"
               required
             />
-            <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500">
+            <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[10px] text-gray-500">
               <span>Whitelisted Oracles: Etherscan, Tenderly, Blockscout, GitHub (raw), DefiLlama</span>
               <span className="text-yellow-400 font-mono">Anti-Griefing Stake: slashed if source is spoofed</span>
             </div>

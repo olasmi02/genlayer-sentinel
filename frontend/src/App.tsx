@@ -24,10 +24,18 @@ import { RegisterModal } from './components/RegisterModal';
 import { ConsensusModal } from './components/ConsensusModal';
 import {
   NETWORKS,
+  NetworkKey,
   INITIAL_PROTOCOLS,
-  DEFAULT_CONTRACT_ADDRESS,
-  DEMO_ACCOUNT_ADDRESS,
+  deployedAddress,
   getGenLayerClient,
+  getProvider,
+  getConnectedAccount,
+  getWalletChainId,
+  connectWallet,
+  ensureWalletNetwork,
+  fetchBalance,
+  requestTestGen,
+  metamaskDeepLink,
   fetchProtocols,
   fetchReports,
   formatGen,
@@ -41,9 +49,13 @@ import { Protocol, ExploitReport } from './lib/types';
 type ContractStatus = 'checking' | 'live' | 'missing';
 
 export function App() {
-  const [selectedNetwork, setSelectedNetwork] = useState<keyof typeof NETWORKS>('studionext');
-  const [walletAddress, setWalletAddress] = useState<string | null>(DEMO_ACCOUNT_ADDRESS);
-  const [contractAddress, setContractAddress] = useState<string>(DEFAULT_CONTRACT_ADDRESS);
+  const [selectedNetwork, setSelectedNetwork] = useState<NetworkKey>('studionet');
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [walletChainId, setWalletChainId] = useState<number | null>(null);
+  const [walletBalance, setWalletBalance] = useState<bigint | null>(null);
+  const [isFunding, setIsFunding] = useState(false);
+  const [notice, setNotice] = useState<{ text: string; link?: { href: string; label: string } } | null>(null);
+  const [contractAddress, setContractAddress] = useState<string>(deployedAddress('studionet'));
   const [contractStatus, setContractStatus] = useState<ContractStatus>('checking');
   const [contractError, setContractError] = useState<string>('');
   const [protocols, setProtocols] = useState<Protocol[]>(INITIAL_PROTOCOLS);
@@ -59,11 +71,15 @@ export function App() {
   const [deliberationResult, setDeliberationResult] = useState<any>(null);
   const [deliberationError, setDeliberationError] = useState<string>('');
 
+  const errorText = (e: any) => e?.shortMessage || e?.details || e?.message || String(e);
+
   // Returns the freshly loaded on-chain state so callers don't depend on stale React state
   const refreshData = async (): Promise<{ protocols: Protocol[]; reports: ExploitReport[] } | null> => {
     if (!contractAddress || contractAddress.length !== 42) {
       setContractStatus('missing');
-      setContractError('Enter a 42-character contract address.');
+      setContractError(`No SentinEL contract is deployed on ${NETWORKS[selectedNetwork].name} yet.`);
+      setProtocols(INITIAL_PROTOCOLS);
+      setReports([]);
       return null;
     }
     try {
@@ -78,7 +94,7 @@ export function App() {
     } catch (e: any) {
       console.warn('SentinEL contract unreachable:', e);
       setContractStatus('missing');
-      setContractError(e?.shortMessage || e?.details || e?.message || String(e));
+      setContractError(errorText(e));
       setProtocols(INITIAL_PROTOCOLS);
       setReports([]);
       return null;
@@ -90,21 +106,104 @@ export function App() {
     refreshData();
   }, [selectedNetwork, contractAddress]);
 
-  const handleConnectWallet = () => {
-    if (walletAddress) {
-      setWalletAddress(null);
-    } else {
-      setWalletAddress(DEMO_ACCOUNT_ADDRESS);
+  const handleSelectNetwork = (net: NetworkKey) => {
+    setSelectedNetwork(net);
+    setContractAddress(deployedAddress(net));
+  };
+
+  const refreshBalance = async (address = walletAddress) => {
+    if (!address) return setWalletBalance(null);
+    setWalletBalance(await fetchBalance(selectedNetwork, address).catch(() => null));
+  };
+
+  // Restore a wallet the user already authorised (no prompt) and follow account/network changes
+  useEffect(() => {
+    const provider = getProvider();
+    if (!provider) return;
+    getConnectedAccount().then(setWalletAddress);
+    getWalletChainId().then(setWalletChainId);
+    const onAccounts = (accounts: string[]) => setWalletAddress(accounts[0] || null);
+    const onChain = (hex: string) => setWalletChainId(parseInt(hex, 16));
+    provider.on?.('accountsChanged', onAccounts);
+    provider.on?.('chainChanged', onChain);
+    return () => {
+      provider.removeListener?.('accountsChanged', onAccounts);
+      provider.removeListener?.('chainChanged', onChain);
+    };
+  }, []);
+
+  useEffect(() => {
+    refreshBalance();
+  }, [walletAddress, selectedNetwork]);
+
+  const showNoWallet = () => {
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    setNotice(
+      isMobile
+        ? { text: 'No wallet found in this browser. Open SentinEL in the MetaMask app to connect.', link: { href: metamaskDeepLink(), label: 'Open in MetaMask' } }
+        : { text: 'No browser wallet found. Install MetaMask to report exploits or register protocols.', link: { href: 'https://metamask.io/download/', label: 'Get MetaMask' } }
+    );
+  };
+
+  const handleConnectWallet = async () => {
+    if (!getProvider()) return showNoWallet();
+    try {
+      const address = await connectWallet(selectedNetwork);
+      setWalletAddress(address);
+      setWalletChainId(NETWORKS[selectedNetwork].chainId);
+      setNotice(null);
+    } catch (e: any) {
+      setNotice({ text: 'Wallet connection failed: ' + errorText(e) });
+    }
+  };
+
+  const handleDisconnectWallet = () => {
+    // Wallets can't be disconnected programmatically; forget it locally until the user reconnects
+    setWalletAddress(null);
+    setWalletBalance(null);
+  };
+
+  const handleRequestTestGen = async () => {
+    if (!walletAddress) return;
+    setIsFunding(true);
+    try {
+      await requestTestGen(selectedNetwork, walletAddress);
+      await refreshBalance(walletAddress);
+      setNotice({ text: `Added 1,000 test GEN to ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)} on ${NETWORKS[selectedNetwork].shortName}.` });
+    } catch (e: any) {
+      setNotice({ text: 'Faucet request failed: ' + errorText(e) });
+    } finally {
+      setIsFunding(false);
     }
   };
 
   const requireLiveContract = () => {
     if (contractStatus === 'live') return true;
-    alert(
-      `SentinEL contract is not reachable at ${contractAddress} on ${NETWORKS[selectedNetwork].name}.\n\n` +
-      `Deploy it with "npm run deploy" (repo root) or paste a deployed address in the header.\n\n${contractError}`
-    );
+    setNotice({ text: `SentinEL is not reachable on ${NETWORKS[selectedNetwork].name}. ${contractError}` });
     return false;
+  };
+
+  /** Writes need a connected wallet on the selected network; returns a wallet-backed client or null. */
+  const requireWalletClient = async () => {
+    if (!requireLiveContract()) return null;
+    if (!getProvider()) {
+      showNoWallet();
+      return null;
+    }
+    let address = walletAddress;
+    try {
+      if (!address) {
+        address = await connectWallet(selectedNetwork);
+        setWalletAddress(address);
+      } else {
+        await ensureWalletNetwork(selectedNetwork);
+      }
+      setWalletChainId(NETWORKS[selectedNetwork].chainId);
+    } catch (e: any) {
+      setNotice({ text: 'Connect your wallet to continue: ' + errorText(e) });
+      return null;
+    }
+    return getGenLayerClient(selectedNetwork, address);
   };
 
   const handleOpenReportForProtocol = (addr: string) => {
@@ -113,7 +212,8 @@ export function App() {
   };
 
   const handleTriggerReport = async (targetAddress: string, proofUrl: string, exploitType: string) => {
-    if (!requireLiveContract()) return;
+    const client = await requireWalletClient();
+    if (!client) return;
     const targetProto = protocols.find((p) => p.address.toLowerCase() === targetAddress.toLowerCase());
     setActiveTargetProtocol(targetProto?.name || targetAddress);
     setIsConsensusModalOpen(true);
@@ -122,14 +222,14 @@ export function App() {
     setDeliberationError('');
 
     try {
-      const client = getGenLayerClient(selectedNetwork);
       const previousLatestId = reports.length > 0 ? reports[0].id : -1;
 
-      // 1. Submit the staked report; validators fetch the evidence and reach consensus on-chain
+      // 1. Submit the staked report from the user's wallet; validators fetch the evidence and reach consensus on-chain
       const onChainTx = await submitExploitReport(client, contractAddress, targetAddress, proofUrl, exploitType);
 
       // 2. The verdict is whatever the contract recorded: read the newest report back
       const fresh = await refreshData();
+      refreshBalance();
       const latestReport = fresh?.reports.find(
         (r) => r.id > previousLatestId && r.targetAddress === targetAddress.toLowerCase()
       );
@@ -149,33 +249,37 @@ export function App() {
         steps: onChainTx.steps
       });
     } catch (e: any) {
-      setDeliberationError(e?.shortMessage || e?.message || String(e));
+      setDeliberationError(errorText(e));
     } finally {
       setIsDeliberating(false);
     }
   };
 
   const handleRegisterProtocol = async (newProto: Protocol) => {
-    if (!requireLiveContract()) return;
+    const client = await requireWalletClient();
+    if (!client) return;
     try {
-      const client = getGenLayerClient(selectedNetwork);
       await registerProtocol(client, contractAddress, newProto.address, newProto.name, newProto.rules, parseGen(newProto.bountyPool));
       await refreshData();
+      refreshBalance();
     } catch (e: any) {
-      alert('Protocol registration failed: ' + (e?.shortMessage || e?.message || e));
+      setNotice({ text: 'Protocol registration failed: ' + errorText(e) });
     }
   };
 
   const handleResetProtocol = async (address: string) => {
-    if (!requireLiveContract()) return;
+    const client = await requireWalletClient();
+    if (!client) return;
     try {
-      const client = getGenLayerClient(selectedNetwork);
       await resetCircuitBreaker(client, contractAddress, address);
       await refreshData();
     } catch (e: any) {
-      alert('Circuit breaker reset failed: ' + (e?.shortMessage || e?.message || e));
+      setNotice({ text: 'Circuit breaker reset failed: ' + errorText(e) });
     }
   };
+
+  const isOwner = (proto: Protocol) => !!walletAddress && proto.owner?.toLowerCase() === walletAddress.toLowerCase();
+  const wrongNetwork = !!walletAddress && walletChainId !== null && walletChainId !== NETWORKS[selectedNetwork].chainId;
 
   const activeBreakers = protocols.filter((p) => p.isHalted).length;
 
@@ -183,16 +287,41 @@ export function App() {
     <div className="min-h-screen bg-[#0B0F19] text-gray-100 font-sans selection:bg-purple-500/30">
       <Header
         selectedNetwork={selectedNetwork}
-        onSelectNetwork={setSelectedNetwork}
+        onSelectNetwork={handleSelectNetwork}
         walletAddress={walletAddress}
+        walletBalance={walletBalance}
+        wrongNetwork={wrongNetwork}
+        isFunding={isFunding}
         onConnectWallet={handleConnectWallet}
+        onDisconnectWallet={handleDisconnectWallet}
+        onSwitchNetwork={() => ensureWalletNetwork(selectedNetwork).catch((e) => setNotice({ text: errorText(e) }))}
+        onRequestTestGen={handleRequestTestGen}
         onOpenRegister={() => setIsRegisterModalOpen(true)}
         contractAddress={contractAddress}
         setContractAddress={setContractAddress}
       />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">
-        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-purple-900/40 via-[#0B0F19] to-cyan-900/20 border border-gray-800/60 p-8 md:p-12 shadow-2xl">
+      {notice && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+          <div className="flex items-start gap-3 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-xs text-yellow-100">
+            <Info className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
+            <p className="flex-1 min-w-0 break-words">
+              {notice.text}{' '}
+              {notice.link && (
+                <a href={notice.link.href} target="_blank" rel="noreferrer" className="font-bold text-yellow-300 underline">
+                  {notice.link.label}
+                </a>
+              )}
+            </p>
+            <button onClick={() => setNotice(null)} className="text-yellow-300 hover:text-white shrink-0" aria-label="Dismiss">
+              <XCircle className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-10 sm:space-y-12">
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-purple-900/40 via-[#0B0F19] to-cyan-900/20 border border-gray-800/60 p-6 sm:p-8 md:p-12 shadow-2xl">
           <div className="absolute top-0 right-0 -mt-20 -mr-20 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
           <div className="absolute bottom-0 left-0 -mb-20 -ml-20 w-80 h-80 bg-cyan-600/10 rounded-full blur-3xl pointer-events-none" />
           
@@ -201,10 +330,10 @@ export function App() {
               <SparklesIcon className="w-4 h-4" />
               The First AI-Native Security Layer
             </div>
-            <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight mb-6">
+            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight leading-tight mb-6">
               Decentralized Security <br className="hidden md:block"/> Powered by LLM Consensus
             </h1>
-            <p className="text-gray-400 text-lg leading-relaxed mb-8 max-w-2xl">
+            <p className="text-gray-400 text-base sm:text-lg leading-relaxed mb-8 max-w-2xl">
               SentinEL connects external security events to on-chain execution. By leveraging GenLayer's Equivalence Principle, AI validators evaluate web-based exploit proofs and autonomously halt compromised protocols before funds are drained.
             </p>
             <div className="flex flex-wrap items-center gap-4">
@@ -241,7 +370,7 @@ export function App() {
                 <XCircle className="w-4 h-4 shrink-0" />
               )}
               <span>
-                {contractStatus === 'live' && <>Live: reading on-chain state from <code className="font-mono">{contractAddress}</code></>}
+                {contractStatus === 'live' && <>Live: reading on-chain state from <code className="font-mono break-all">{contractAddress}</code></>}
                 {contractStatus === 'checking' && <>Connecting to SentinEL contract...</>}
                 {contractStatus === 'missing' && (
                   <>
@@ -255,50 +384,50 @@ export function App() {
         </section>
 
         {/* Global Stats Matrix */}
-        <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-[#0f1422] border border-gray-800 p-5 rounded-2xl shadow-lg">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+        <section className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+          <div className="bg-[#0f1422] border border-gray-800 p-4 sm:p-5 rounded-2xl shadow-lg min-w-0">
+            <div className="flex items-center gap-2 sm:gap-3 mb-2">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-lg bg-emerald-500/10 flex items-center justify-center">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
               </div>
-              <h3 className="text-sm font-semibold text-gray-400">Guarded Protocols</h3>
+              <h3 className="text-xs sm:text-sm font-semibold text-gray-400 leading-tight">Guarded Protocols</h3>
             </div>
-            <p className="text-3xl font-black text-white font-mono">{protocols.length}</p>
+            <p className="text-xl sm:text-3xl font-black text-white font-mono break-words">{protocols.length}</p>
           </div>
           
-          <div className="bg-[#0f1422] border border-gray-800 p-5 rounded-2xl shadow-lg">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-yellow-500/10 flex items-center justify-center">
+          <div className="bg-[#0f1422] border border-gray-800 p-4 sm:p-5 rounded-2xl shadow-lg min-w-0">
+            <div className="flex items-center gap-2 sm:gap-3 mb-2">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-lg bg-yellow-500/10 flex items-center justify-center">
                 <Coins className="w-4 h-4 text-yellow-400" />
               </div>
-              <h3 className="text-sm font-semibold text-gray-400">Total Bounty Escrow</h3>
+              <h3 className="text-xs sm:text-sm font-semibold text-gray-400 leading-tight">Total Bounty Escrow</h3>
             </div>
-            <p className="text-3xl font-black text-white font-mono">
+            <p className="text-xl sm:text-3xl font-black text-white font-mono break-words">
               {formatGen(protocols.reduce((sum, p) => sum + BigInt(p.bountyPoolWei || '0'), 0n))}
             </p>
           </div>
 
-          <div className="bg-[#0f1422] border border-gray-800 p-5 rounded-2xl shadow-lg">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center">
+          <div className="bg-[#0f1422] border border-gray-800 p-4 sm:p-5 rounded-2xl shadow-lg min-w-0">
+            <div className="flex items-center gap-2 sm:gap-3 mb-2">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-lg bg-red-500/10 flex items-center justify-center">
                 <ShieldAlert className="w-4 h-4 text-red-400" />
               </div>
-              <h3 className="text-sm font-semibold text-gray-400">Active Circuit Breakers</h3>
+              <h3 className="text-xs sm:text-sm font-semibold text-gray-400 leading-tight">Active Circuit Breakers</h3>
             </div>
-            <div className="flex items-end gap-2">
-              <p className="text-3xl font-black text-white font-mono">{activeBreakers}</p>
+            <div className="flex flex-wrap items-end gap-x-2">
+              <p className="text-xl sm:text-3xl font-black text-white font-mono break-words">{activeBreakers}</p>
               {activeBreakers > 0 && <span className="text-xs text-red-400 font-bold mb-1.5 animate-pulse">INCIDENT ACTIVE</span>}
             </div>
           </div>
 
-          <div className="bg-[#0f1422] border border-gray-800 p-5 rounded-2xl shadow-lg">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center">
+          <div className="bg-[#0f1422] border border-gray-800 p-4 sm:p-5 rounded-2xl shadow-lg min-w-0">
+            <div className="flex items-center gap-2 sm:gap-3 mb-2">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 shrink-0 rounded-lg bg-cyan-500/10 flex items-center justify-center">
                 <Activity className="w-4 h-4 text-cyan-400" />
               </div>
-              <h3 className="text-sm font-semibold text-gray-400">Reports Processed</h3>
+              <h3 className="text-xs sm:text-sm font-semibold text-gray-400 leading-tight">Reports Processed</h3>
             </div>
-            <p className="text-3xl font-black text-white font-mono">{reports.length}</p>
+            <p className="text-xl sm:text-3xl font-black text-white font-mono break-words">{reports.length}</p>
           </div>
         </section>
 
@@ -376,14 +505,18 @@ export function App() {
 
                 {/* Actions */}
                 <div className="pt-2 border-t border-gray-800/60 flex items-center gap-2">
-                  {proto.isHalted ? (
+                  {proto.isHalted && isOwner(proto) ? (
                     <button
                       onClick={() => handleResetProtocol(proto.address)}
                       className="w-full py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-semibold transition flex items-center justify-center gap-1.5"
                     >
                       <RefreshCw className="w-3.5 h-3.5 text-cyan-400" />
-                      Reset Circuit Breaker (Admin)
+                      Reset Circuit Breaker (Owner)
                     </button>
+                  ) : proto.isHalted ? (
+                    <div className="w-full py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs font-semibold text-center">
+                      Halted: awaiting owner remediation
+                    </div>
                   ) : (
                     <button
                       onClick={() => handleOpenReportForProtocol(proto.address)}
@@ -439,10 +572,10 @@ export function App() {
                       <span className="text-xs text-purple-400 font-semibold">{rep.exploitType}</span>
                     </div>
 
-                    <p className="text-xs text-gray-300 font-mono leading-relaxed">{rep.reasoning}</p>
+                    <p className="text-xs text-gray-300 font-mono leading-relaxed break-words">{rep.reasoning}</p>
 
                     <div className="flex flex-wrap items-center gap-3 text-[11px] text-gray-400 pt-1">
-                      <span>Reporter: <code className="text-gray-300">{rep.reporter}</code></span>
+                      <span className="min-w-0 break-all">Reporter: <code className="text-gray-300">{rep.reporter}</code></span>
                       <span>•</span>
                       <a
                         href={rep.proofUrl}

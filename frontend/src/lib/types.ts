@@ -1,6 +1,7 @@
 export interface Protocol {
   name: string;
   address: string;
+  owner?: string;
   category: string;
   rules: string;
   bountyPool: string;

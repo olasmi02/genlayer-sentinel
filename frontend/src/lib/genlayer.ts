@@ -1,48 +1,139 @@
-import { createClient, chains, createAccount } from 'genlayer-js';
+import { createClient, chains } from 'genlayer-js';
 import { Protocol, ExploitReport, ValidatorConsensusStep } from './types';
-import deployment from './deployment.json';
+import deployments from './deployment.json';
+
+const WEI_PER_GEN = 10n ** 18n;
+
+function studioChain(id: number, name: string, rpcUrl: string, explorer: string) {
+  return {
+    ...chains.studionet,
+    id,
+    name,
+    rpcUrls: { default: { http: [rpcUrl] } },
+    blockExplorers: { default: { name: `${name} Explorer`, url: explorer } }
+  };
+}
 
 export const NETWORKS = {
-  studionext: {
-    name: 'GenLayer Studio Next (61997)',
-    chainId: 61997,
-    rpcUrl: 'https://studio-dev.genlayer.com/api',
-    explorer: 'https://explorer-studio.genlayer.com',
-    currency: 'GEN',
-    chainConfig: {
-      ...chains.studionet,
-      id: 61997,
-      name: 'Studio Next',
-      rpcUrls: { default: { http: ['https://studio.genlayer.com/api'] } }
-    }
-  },
   studionet: {
     name: 'GenLayer StudioNet (61999)',
+    shortName: 'StudioNet',
     chainId: 61999,
     rpcUrl: 'https://studio.genlayer.com/api',
     explorer: 'https://explorer-studio.genlayer.com',
     currency: 'GEN',
-    chainConfig: chains.studionet
+    chainConfig: studioChain(61999, 'GenLayer StudioNet', 'https://studio.genlayer.com/api', 'https://explorer-studio.genlayer.com')
+  },
+  studionext: {
+    name: 'GenLayer Studio Next (61997)',
+    shortName: 'Studio Next',
+    chainId: 61997,
+    rpcUrl: 'https://studio-dev.genlayer.com/api',
+    explorer: 'https://explorer-studio-dev.genlayer.com',
+    currency: 'GEN',
+    chainConfig: studioChain(61997, 'GenLayer Studio Next', 'https://studio-dev.genlayer.com/api', 'https://explorer-studio-dev.genlayer.com')
   }
 };
 
-// Written by scripts/deploy.mjs after each deployment
-export const DEFAULT_CONTRACT_ADDRESS: string = deployment.address;
+export type NetworkKey = keyof typeof NETWORKS;
 
-const DEMO_PK = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
-const account = createAccount(DEMO_PK);
-export const DEMO_ACCOUNT_ADDRESS = account.address;
+// Written by scripts/deploy.mjs after each deployment, keyed by network
+export function deployedAddress(networkKey: NetworkKey): string {
+  return (deployments as Record<string, { address: string } | undefined>)[networkKey]?.address || '';
+}
 
-export function getGenLayerClient(networkKey: keyof typeof NETWORKS) {
+/** Read-only client, or a client that sends transactions through the connected browser wallet. */
+export function getGenLayerClient(networkKey: NetworkKey, walletAddress?: string | null) {
   const net = NETWORKS[networkKey];
   return createClient({
     chain: net.chainConfig,
-    endpoint: net.chainConfig.rpcUrls.default.http[0],
-    account
-  });
+    ...(walletAddress ? { account: walletAddress as `0x${string}`, provider: getProvider() } : {})
+  } as any);
 }
 
-const WEI_PER_GEN = 10n ** 18n;
+// ---------- Browser wallet (EIP-1193, e.g. MetaMask) ----------
+
+export interface Eip1193Provider {
+  request(args: { method: string; params?: unknown[] }): Promise<any>;
+  on?(event: string, handler: (...args: any[]) => void): void;
+  removeListener?(event: string, handler: (...args: any[]) => void): void;
+}
+
+export function getProvider(): Eip1193Provider | undefined {
+  return typeof window !== 'undefined' ? (window as any).ethereum : undefined;
+}
+
+/** Deep link that reopens this page inside the MetaMask mobile browser. */
+export function metamaskDeepLink(): string {
+  return `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`;
+}
+
+/** Returns the already-authorised account without prompting, if any. */
+export async function getConnectedAccount(): Promise<string | null> {
+  const provider = getProvider();
+  if (!provider) return null;
+  const accounts: string[] = await provider.request({ method: 'eth_accounts' }).catch(() => []);
+  return accounts[0] || null;
+}
+
+export async function getWalletChainId(): Promise<number | null> {
+  const provider = getProvider();
+  if (!provider) return null;
+  const hex: string = await provider.request({ method: 'eth_chainId' }).catch(() => '');
+  return hex ? parseInt(hex, 16) : null;
+}
+
+/** Switches the wallet to the network, adding it first if the wallet doesn't know it. */
+export async function ensureWalletNetwork(networkKey: NetworkKey): Promise<void> {
+  const provider = getProvider();
+  if (!provider) throw new Error('No browser wallet found. Install MetaMask to send transactions.');
+  const net = NETWORKS[networkKey];
+  const chainIdHex = `0x${net.chainId.toString(16)}`;
+  if ((await provider.request({ method: 'eth_chainId' })) === chainIdHex) return;
+  try {
+    await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainIdHex }] });
+  } catch (err: any) {
+    // 4902: chain not added to the wallet yet
+    if (err?.code !== 4902 && err?.data?.originalError?.code !== 4902) throw err;
+    await provider.request({
+      method: 'wallet_addEthereumChain',
+      params: [{
+        chainId: chainIdHex,
+        chainName: net.chainConfig.name,
+        rpcUrls: [net.rpcUrl],
+        nativeCurrency: { name: 'GEN', symbol: 'GEN', decimals: 18 },
+        blockExplorerUrls: [net.explorer]
+      }]
+    });
+  }
+}
+
+export async function connectWallet(networkKey: NetworkKey): Promise<string> {
+  const provider = getProvider();
+  if (!provider) throw new Error('No browser wallet found. Install MetaMask to send transactions.');
+  const accounts: string[] = await provider.request({ method: 'eth_requestAccounts' });
+  if (!accounts?.length) throw new Error('Wallet did not return an account.');
+  await ensureWalletNetwork(networkKey);
+  return accounts[0];
+}
+
+async function rawRpc(networkKey: NetworkKey, body: string): Promise<any> {
+  const res = await fetch(NETWORKS[networkKey].rpcUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  return data.result;
+}
+
+export async function fetchBalance(networkKey: NetworkKey, address: string): Promise<bigint> {
+  const result = await rawRpc(networkKey, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] }));
+  return BigInt(result);
+}
+
+/** Studio-only faucet. The amount is in wei and too large for a JS number, so it is spliced into the JSON. */
+export async function requestTestGen(networkKey: NetworkKey, address: string, amountGen = 1_000n): Promise<void> {
+  const wei = (amountGen * WEI_PER_GEN).toString();
+  await rawRpc(networkKey, `{"jsonrpc":"2.0","id":1,"method":"sim_fundAccount","params":["${address}",${wei}]}`);
+}
 
 export function formatGen(wei: string | bigint | number | undefined): string {
   if (wei === undefined || wei === null || wei === '') return '0 GEN';
@@ -160,6 +251,7 @@ export async function fetchProtocols(client: any, contractAddress: string): Prom
     return {
       name: p.protocol_name,
       address: p.target_address,
+      owner: p.owner,
       category: meta?.category || 'Registered Protocol',
       rules: p.rules,
       bountyPool: formatGen(p.bounty_pool),
